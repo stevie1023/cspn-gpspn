@@ -1,0 +1,152 @@
+import pandas as pd
+import numpy as np
+from learnspngp import Mixture, Separator, GPMixture, Color
+import gc
+import torch
+import gpytorch
+from gpytorch.kernels import *
+from gpytorch.likelihoods import *
+from gpytorch.mlls import *
+from torch.optim import *
+from torch.utils.data import TensorDataset, DataLoader
+import matplotlib.pyplot as plt
+
+
+np.random.seed(58)
+
+data = pd.read_csv('/export/homebrick/home/mzhu/mzhu_code/data6dnormal.csv')
+
+data_abnormal = pd.read_csv('/export/homebrick/home/mzhu/mzhu_code/data6dabnormal.csv')
+data = pd.DataFrame(data).dropna() # miss = data.isnull().sum()/len(data)
+data_abnormal = pd.DataFrame(data_abnormal).dropna()
+dmean, dstd = data.mean(), data.std()
+data = (data-dmean)/dstd
+dmean1, dstd1 = data_abnormal.mean(), data_abnormal.std()
+data_abnormal = (data_abnormal-dmean1)/dstd1
+# GPSPN on full data
+train = data.sample(frac=0.8, random_state=58)
+test  = data.drop(train.index)
+train_abnormal = data_abnormal.sample(frac=0.8, random_state=58)
+test_abnormal  = data_abnormal.drop(train_abnormal.index)
+x, y = train.iloc[:, :-1].values, train.iloc[:, -1].values.reshape(-1,1)
+
+class ExactGPModel(gpytorch.models.ExactGP):
+    def __init__(self,x,y,likelihood):
+
+        # self.device = torch.device("cuda" if self.cuda else "cpu")
+        x = torch.from_numpy(x).float()
+        y = torch.from_numpy(y.ravel()).float()
+
+
+
+        super(ExactGPModel, self).__init__(x, y, likelihood)
+        self.mean_module = gpytorch.means.ConstantMean()
+
+
+
+        k = RBFKernel()
+
+        self.covar_module = ScaleKernel(k)
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+likelihood = gpytorch.likelihoods.GaussianLikelihood()
+model = ExactGPModel(x, y, likelihood)
+
+model.train()
+likelihood.train()
+x = torch.from_numpy(x).float()
+y = torch.from_numpy(y.ravel()).float()
+# Use the adam optimizer
+optimizer = torch.optim.Adam([
+    {'params': model.parameters()},  # Includes GaussianLikelihood parameters
+], lr=0.00146)
+
+# "Loss" for GPs - the ma rginal log likelihood
+mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+training_iter = 6000
+loss_cached=[]
+for i in range(training_iter):
+    # Zero gradients from previous iteration
+    optimizer.zero_grad()
+    # Output from model
+    output = model(x)
+    # Calc loss and backprop gradients
+    loss = -mll(output, y)
+    loss.backward()
+    if (i+1) > 0 and (i+1) % 10 == 0:
+        loss_cached.append(loss.item())
+        print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
+        i+1, training_iter, loss.item(),
+        model.covar_module.base_kernel.lengthscale.item(),
+        model.likelihood.noise.item()
+    ))
+    optimizer.step()
+
+
+np.savetxt('loss_one_gp.csv', [np.array(loss_cached)], delimiter=',')
+
+
+
+
+
+model.eval()
+likelihood.eval()
+x_ = test.iloc[:, :-1].values
+y_ = test.iloc[:,-1].values
+x_abnormal = test_abnormal.iloc[:, :-1].values
+y_abnormal = test_abnormal.iloc[:,-1].values
+mll = ExactMarginalLogLikelihood(likelihood, model)
+x1 = torch.from_numpy(x_).float()  # .to('cpu') #.cuda()
+y1 = torch.from_numpy(y_.ravel()).float()
+x1_abnormal = torch.from_numpy(x_abnormal).float()  # .to('cpu') #.cuda()
+y1_abnormal = torch.from_numpy(y_abnormal.ravel()).float()
+test_dataset = TensorDataset(x1, y1)
+test_loader = DataLoader(test_dataset)
+test_dataset_abnormal = TensorDataset(x1_abnormal, y1_abnormal)
+test_loader_abnormal = DataLoader(test_dataset_abnormal)
+with torch.no_grad(), gpytorch.settings.fast_pred_var():
+    mus = []
+    variances = []
+    lls = []
+    for x_batch, y_batch in test_loader:
+        preds = model.likelihood(model(x_batch))
+        mus.append(preds.mean)
+        variances.append(preds.variance)
+        lls.append(model.likelihood.log_marginal(y_batch, model(x_batch)))
+
+predictive_means = torch.cat(mus, dim=-1)
+test_lls = torch.cat(lls, dim=-1)
+y2 = (y1 * dstd.iloc[-1]) + dmean.iloc[-1]
+predictive_means_ = predictive_means * dstd.iloc[-1]+ dmean.iloc[-1]
+sqe = torch.pow(predictive_means_- y2, 2)
+# print(f"sqe: {sqe}, NLL: {-test_lls}")
+rmse = torch.mean(torch.pow(predictive_means_ - y2, 2)).sqrt()
+print(f"RMSE: {rmse.item()}, NLL: {-test_lls.mean().item()}")
+
+# with torch.no_grad(), gpytorch.settings.fast_pred_var():
+#     mus_abnormal = []
+#     variances_abnormal = []
+#     lls_abnormal = []
+#     for x_batch, y_batch in test_loader_abnormal:
+#         preds_abnormal = model.likelihood(model(x_batch))
+#         mus_abnormal.append(preds_abnormal.mean)
+#         variances_abnormal.append(preds_abnormal.variance)
+#         lls_abnormal.append(model.likelihood.log_marginal(y_batch, model(x_batch)))
+# predictive_means_abnormal = torch.cat(mus_abnormal, dim=-1)
+# test_lls_abnormal = torch.cat(lls_abnormal, dim=-1)
+# y2_abnormal = (y1_abnormal * dstd1.iloc[-1]) + dmean1.iloc[-1]
+# predictive_means_abnormal_ = predictive_means_abnormal * dstd1.iloc[-1]+ dmean1.iloc[-1]
+# sqe_abnormal = torch.pow(predictive_means_abnormal_- y2_abnormal, 2)
+# print(f"sqe_abnormal: {sqe_abnormal}, NLL: {-test_lls_abnormal}")
+# rmse_abnormal = torch.mean(torch.pow(predictive_means_abnormal_ - y2_abnormal, 2)).sqrt()
+# print(f"RMSE_abnormal: {rmse_abnormal.item()}, NLL: {-test_lls_abnormal.mean().item()}")
+#
+# sqe_all = torch.cat((sqe,sqe_abnormal),dim=-1)
+# np.savetxt('all_rmse_one_gp.csv', [sqe_all.numpy()], delimiter=',')
+# mll_all = torch.cat((-test_lls,-test_lls_abnormal),dim=-1)
+# np.savetxt('all_mll_one_gp.csv', [mll_all.numpy()], delimiter=',')
+
