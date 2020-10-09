@@ -1,0 +1,65 @@
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from originallearnspngp import query, build_bins
+from originalspngp import structure
+import sys
+from sklearn.linear_model import SGDRegressor
+
+from sklearn.linear_model import BayesianRidge, LinearRegression
+from scipy import stats
+np.random.seed(58)
+
+data = pd.read_csv('/Users/zmypps/Desktop/GP-SPN/GPSPN CODE/madesi/mzhu_code/100006dabnormal.csv')
+data = pd.DataFrame(data).dropna()  # miss = data.isnull().sum()/len(data)
+dmean, dstd = data.mean(), data.std()
+data = (data - dmean) / dstd
+
+train = data.sample(frac=0.8, random_state=58)
+test = data.drop(train.index)
+x, y = train.iloc[:, 3:].values, train.iloc[:, :3].values
+
+
+opts = {
+    'min_samples': 0,
+    'X': x,
+    'Y': y,
+    'qd': 4,
+    'max_depth': 4,
+    'max_samples': 10 ** 10,
+    'log': True,
+    'jump': True,
+    'reduce_branching': True
+}
+root_region, gps_ = build_bins(**opts)
+root, gps = structure(root_region,sum_scope = [i for i in range(y.shape[1])], gp_types=['rbf'])
+
+for i, gp in enumerate(gps):
+    idx = query(x, gp.mins, gp.maxs)
+    gp.x = x[idx]
+    y_scope = y[:,gp.scope]
+    print(gp.scope)
+    gp.y = y_scope[idx]
+
+    print(f"Training GP {i + 1}/{len(gps)} ({len(idx)})")
+    gp.init(cuda=True)
+
+root.update()
+
+#
+mu, cov = root.forward(test.iloc[:, 3:].values, smudge=0)
+print(mu.shape)
+mu_s1 = (mu[:,0].ravel() * dstd.iloc[0]) + dmean.iloc[0]
+mu_s2 = (mu[:,1].ravel() * dstd.iloc[1]) + dmean.iloc[1]
+mu_s3 = (mu[:,2].ravel() * dstd.iloc[2]) + dmean.iloc[2]
+mu_t1 = (test.iloc[:, 0] * dstd.iloc[0]) + dmean.iloc[0]
+mu_t2 = (test.iloc[:, 1] * dstd.iloc[1]) + dmean.iloc[1]
+mu_t3 = (test.iloc[:, 2] * dstd.iloc[2]) + dmean.iloc[2]
+sqe1 = (mu_s1 - mu_t1.values) ** 2
+sqe2 = (mu_s2 - mu_t2.values) ** 2
+sqe3 = (mu_s3 - mu_t3.values) ** 2
+rmse1 = np.sqrt(sqe1.sum() / len(test))
+rmse2 = np.sqrt(sqe2.sum() / len(test))
+rmse3 = np.sqrt(sqe3.sum() / len(test))
+print(f"SPN-GP (smudge=0 RMSE: {rmse1}, RMSE2: {rmse2}, RMSE3: {rmse3}")
