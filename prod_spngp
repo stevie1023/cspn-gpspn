@@ -2,8 +2,8 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from originallearnspngp import query, build_bins
-from originalspngp import structure
+from prod_structure import query, build_bins
+from prod_inference import structure
 import sys
 from sklearn.linear_model import SGDRegressor
 
