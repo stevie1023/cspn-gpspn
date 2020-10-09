@@ -1,5 +1,5 @@
 import numpy as np
-from originallearnspngp import Mixture, Separator, GPMixture, Color
+from prod_structure import Mixture, Separator, GPMixture, Color,Product
 import gc
 import torch
 import gpytorch
@@ -8,7 +8,7 @@ from gpytorch.likelihoods import *
 from gpytorch.mlls import *
 from torch.optim import *
 from torch.utils.data import TensorDataset, DataLoader
-from originallearnspngp import Product
+
 
 # from scipy.optimize import minimize
 # from numpy.linalg   import inv, cholesky
