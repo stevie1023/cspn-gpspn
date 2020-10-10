@@ -1,5 +1,5 @@
 import numpy as np
-from prod_structure import Mixture, Separator, GPMixture, Color,Product
+from prod_structure import Mixture, Separator, GPMixture, Color
 import gc
 import torch
 import gpytorch
@@ -8,7 +8,7 @@ from gpytorch.likelihoods import *
 from gpytorch.mlls import *
 from torch.optim import *
 from torch.utils.data import TensorDataset, DataLoader
-
+from prod_structure import Product
 
 # from scipy.optimize import minimize
 # from numpy.linalg   import inv, cholesky
@@ -73,22 +73,36 @@ class Split:
 
     def forward(self, x_pred, **kwargs):
         smudge = dict.get(kwargs, 'smudge', 0)
+        if type(self.children[0]) is Productt:
+            mu_x = np.zeros((len(x_pred), len(self.children[0].scope)))
+            co_x = np.zeros((len(x_pred), len(self.children[0].scope)))
+            left, right = self.children[0], self.children[1]
 
-        mu_x = np.zeros((len(x_pred), len(self.children[0].scope)))
-        co_x = np.zeros((len(x_pred), len(self.children[0].scope)))
-        left, right = self.children[0], self.children[1]
+            smudge_scales = dict.get(kwargs, 'smudge_scales', {})
+            smudge_scale = dict.get(smudge_scales, self.depth, 1)
 
-        smudge_scales = dict.get(kwargs, 'smudge_scales', {})
-        smudge_scale = dict.get(smudge_scales, self.depth, 1)
+            left_idx = np.where(x_pred[:, self.dimension] <= (self.split + smudge * smudge_scale))[0]
+            right_idx = np.where(x_pred[:, self.dimension] > (self.split - smudge * smudge_scale))[0]
 
-        left_idx = np.where(x_pred[:, self.dimension] <= (self.split + smudge * smudge_scale))[0]
-        right_idx = np.where(x_pred[:, self.dimension] > (self.split - smudge * smudge_scale))[0]
+            mu_x[left_idx], co_x[left_idx] = left.forward(x_pred[left_idx], **kwargs)
+            mu_x[right_idx], co_x[right_idx] = right.forward(x_pred[right_idx], **kwargs)
+            return mu_x, co_x
 
-        mu_x[left_idx], co_x[left_idx] = left.forward(x_pred[left_idx],**kwargs)
-        mu_x[right_idx], co_x[right_idx]= right.forward(x_pred[right_idx],**kwargs)
+        elif type(self.children[0]) is Sum:
+            mu_x = np.zeros((len(x_pred), len(self.children[0].sum_scope)))
+            co_x = np.zeros((len(x_pred), len(self.children[0].sum_scope)))
 
-        print('split shape', mu_x.shape)
-        return mu_x, co_x
+            left, right = self.children[0], self.children[1]
+
+            smudge_scales = dict.get(kwargs, 'smudge_scales', {})
+            smudge_scale = dict.get(smudge_scales, self.depth, 1)
+
+            left_idx = np.where(x_pred[:, self.dimension] <= (self.split + smudge * smudge_scale))[0]
+            right_idx = np.where(x_pred[:, self.dimension] > (self.split - smudge * smudge_scale))[0]
+
+            mu_x[left_idx], co_x[left_idx] = left.forward(x_pred[left_idx],**kwargs)
+            mu_x[right_idx], co_x[right_idx]= right.forward(x_pred[right_idx],**kwargs)
+            return mu_x, co_x
 
     def update(self):
         return np.sum([c.update() for c in self.children])
@@ -119,6 +133,7 @@ class Productt:
         total_len = len(self.scope)
         mu_x = np.empty((len(x_pred), total_len))
         co_x = np.empty((len(x_pred), total_len))
+
         if type(self.children[0]) is Sum:
             for i, child in enumerate(self.children):
                 mu_c, co_c= child.forward(x_pred, **kwargs)
@@ -142,7 +157,7 @@ class Productt:
 
         # _spl = Color.val(self.split, f=1, color='yellow')
         # _dim = Color.val(self.dimension, f=0, color='orange', extra="dim=")
-        _sel = " " * (level - 1) + f"ⓛ Product y1={self.y1} y2 = {self.y2}"
+        _sel = " " * (level - 1) + f"ⓛ Product scope={self.scope} "
         for child in self.children:
             _sel += f"\n{child.__repr__(level + 10)}"
 
@@ -246,7 +261,7 @@ class GP:
 
     def init(self, **kwargs):
         lr = dict.get(kwargs, 'lr', 0.20)
-        steps = dict.get(kwargs, 'steps', 100)
+        steps = dict.get(kwargs, 'steps', 10)
 
         self.n = len(self.x)
         self.cuda = dict.get(kwargs, 'cuda') and torch.cuda.is_available()
@@ -336,6 +351,10 @@ def structure(root_region, sum_scope,**kwargs):
                     scope = child.scope
                     _child = Productt(scope = scope)
                     sto.children.append(_child)
+                if type(child) is Mixture:
+                    sum_scope = child.sum_scope
+                    _child = Sum(sum_scope=sum_scope)
+                    sto.children.append(_child)
             to_process.extend(zip(gro.children, sto.children))
 
         elif type(gro) is Product:
@@ -350,9 +369,7 @@ def structure(root_region, sum_scope,**kwargs):
                     scopee = gro.scope
                     key = (*gro.mins, *gro.maxs, gp_type, count,scopee[i])
                     gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs,count = count, scope=scopee[i])
-                    print('scope=',scopee[i])
                     count+=1
-                    print(count)
                     sto.children.append(gps[key])
                     i += 1
 
