@@ -2,24 +2,26 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from prod_structure import query, build_bins
-from prod_inference import structure
+from prod_learnspngp import query, build_bins
+from prod_gp import structure
 import sys
 from sklearn.linear_model import SGDRegressor
 
 from sklearn.linear_model import BayesianRidge, LinearRegression
 from scipy import stats
 np.random.seed(58)
-
-data = pd.read_csv('/Users/zmypps/Desktop/GP-SPN/GPSPN CODE/madesi/mzhu_code/100006dabnormal.csv')
+data = pd.read_csv('/home/mzhu/madesi/madesi/mzhu_code/10000normal.csv')
+# data = pd.read_csv('/Users/zmypps/Desktop/GP-SPN/GPSPN CODE/madesi/mzhu_code/100006dabnormal.csv')
 data = pd.DataFrame(data).dropna()  # miss = data.isnull().sum()/len(data)
-dmean, dstd = data.mean(), data.std()
-data = (data - dmean) / dstd
+# dmean, dstd = data.mean(), data.std()
+# data = (data - dmean) / dstd
 
 train = data.sample(frac=0.8, random_state=58)
 test = data.drop(train.index)
-x, y = train.iloc[:, 2:].values, train.iloc[:, :2].values
-
+print(test)
+dmean, dstd = train.mean(), train.std()
+train = (data - dmean) / dstd
+x, y = train.iloc[:, 3:].values, train.iloc[:, :3].values
 
 
 opts = {
@@ -36,7 +38,7 @@ opts = {
 root_region, gps_ = build_bins(**opts)
 # root_region, gps_ = build(**opts)
 # root_region, gps_ = build(X=x, delta_divisor=3, max_depth=2)
-root, gps = structure(root_region,sum_scope = [i for i in range(y.shape[1])], gp_types=['rbf'])
+root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_types=['rbf'])
 
 for i, gp in enumerate(gps):
     idx = query(x, gp.mins, gp.maxs)
@@ -51,29 +53,44 @@ for i, gp in enumerate(gps):
 root.update()
 
 #
-mu, cov = root.forward(test.iloc[:, 2:].values, smudge=0)
-print(mu.shape)
-mu_s1 = (mu[:,0].ravel() * dstd.iloc[0]) + dmean.iloc[0]
-mu_s2 = (mu[:,1].ravel() * dstd.iloc[1]) + dmean.iloc[1]
-# mu_s3 = (mu[:,2].ravel() * dstd.iloc[2]) + dmean.iloc[2]
+mu, cov = root.forward(test.iloc[:, 3:].values, smudge=0)
+# mu_s1 = (mu[:,0,0].ravel() * dstd.iloc[0]) + dmean.iloc[0]
+# mu_s2 = (mu[:,0,1].ravel() * dstd.iloc[1]) + dmean.iloc[1]
+# mu_s3 = (mu[:,0,2].ravel() * dstd.iloc[2]) + dmean.iloc[2]
 # mu_s4 = (mu[:,3].ravel() * dstd.iloc[3]) + dmean.iloc[3]
-mu_t1 = (test.iloc[:, 0] * dstd.iloc[0]) + dmean.iloc[0]
-mu_t2 = (test.iloc[:, 1] * dstd.iloc[1]) + dmean.iloc[1]
+# mu_t1 = (test.iloc[:, 0] * dstd.iloc[0]) + dmean.iloc[0]
+# mu_t2 = (test.iloc[:, 1] * dstd.iloc[1]) + dmean.iloc[1]
 # mu_t3 = (test.iloc[:, 2] * dstd.iloc[2]) + dmean.iloc[2]
-# mu_t4 = (test.iloc[:, 3] * dstd.iloc[3]) + dmean.iloc[3]
+mu_s1 = mu[:,0,0].ravel()
+mu_s2 = mu[:,0,1].ravel()
+mu_s3 = mu[:,0,2].ravel()
+mu_t1 = test.iloc[:, 0]
+mu_t2 = test.iloc[:, 1]
+mu_t3 = test.iloc[:, 2]
+
 sqe1 = (mu_s1 - mu_t1.values) ** 2
 sqe2 = (mu_s2 - mu_t2.values) ** 2
-# sqe3 = (mu_s3 - mu_t3.values) ** 2
+sqe3 = (mu_s3 - mu_t3.values) ** 2
 # sqe4 = (mu_s4 - mu_t4.values) ** 2
 rmse1 = np.sqrt(sqe1.sum() / len(test))
 rmse2 = np.sqrt(sqe2.sum() / len(test))
-# rmse3 = np.sqrt(sqe3.sum() / len(test))
-# rmse4 = np.sqrt(sqe4.sum() / len(test))
-print(f"SPN-GP (smudge=0 RMSE: {rmse1}, RMSE2: {rmse2}")
+rmse3 = np.sqrt(sqe3.sum() / len(test))
+mae1 = np.sqrt(sqe1).sum() / len(test)
+mae2 = np.sqrt(sqe2).sum() / len(test)
+mae3 = np.sqrt(sqe3).sum() / len(test)
+nlpd1=0
+for i in range(mu.shape[0]):
+    sigma = np.sqrt(np.abs(np.linalg.det(cov[i,:,:])))
+    print('sigma',sigma)
+    d1 = -1/2*(test.iloc[i, :3].values.reshape((1,1,3))-mu[i,:,:])
+    d1 = d1.reshape((1,3))
+    a = 1/(np.power((2*np.pi),y.shape[1]/2)*sigma)
+    aa =np.linalg.pinv(np.abs(cov[i, :, :])) * d1.T
+
+    nlpd1 += -np.log(a*np.exp(np.dot(np.dot(d1,aa),d1.T)))
+nlpd = nlpd1/len(test)
+
+print(f"SPN-GP  RMSE1: {rmse1}, RMSE2: {rmse2},RMSE3: {rmse3}")
+print(f"SPN-GP  MAE1: {mae1}, MAE2: {mae2},MAE3: {mae3}")
+print(f"SPN-GP  NLPD: {nlpd}")
 #
-# mu_s, cov_s = root.forward(x1, smudge=0)
-# mu_s = (mu_s.ravel() * std2.iloc[1]) + mu2.iloc[1]
-# mu_t = (y1 * std4[1]) + mu4[1]
-# sqe = (mu_s - mu_t) ** 2
-# rmse = np.sqrt(sqe.sum() / len(y1))
-# print(f"SPN-GP (smudge=0) \t RMSE: {rmse}")
