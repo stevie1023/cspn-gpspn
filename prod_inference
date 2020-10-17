@@ -1,5 +1,5 @@
 import numpy as np
-from prod_learnspngp import Mixture, Separator, GPMixture, Color
+from prod_structure import Mixture, Separator, GPMixture, Color
 import gc
 import torch
 import gpytorch
@@ -7,12 +7,11 @@ from gpytorch.kernels import *
 from gpytorch.likelihoods import *
 from gpytorch.mlls import *
 from torch.optim import *
-from torch.utils.data import TensorDataset, DataLoader
-from prod_learnspngp import Product
+from prod_structure import Product
+import tensorflow as tf
 
-# from scipy.optimize import minimize
-# from numpy.linalg   import inv, cholesky
-y_d =3
+y_d =3 ## indicates the scope of y
+
 class Sum:
     def __init__(self, **kwargs):
         self.children = []
@@ -26,37 +25,28 @@ class Sum:
             return r_[0].reshape(-1, 1), r_[1].reshape(-1, 1)
         _wei = np.array(self.weights).reshape((-1,1))
 
-
-        # wid = len(self.scope)
-        # for j in range(wid):
-        #     mu_temp = np.empty((len(x_pred), len(self.weights)))
-        #     # co_temp = np.empty((len(x_pred), y_d,y_d))
-        #     for i, child in enumerate(self.children):
-        #         mu_c, co_c= child.forward(x_pred, **kwargs)
-        #         mu_temp[:,i] = mu_c[:,j]
-        #     return_mu1 = mu_temp @ _wei
-        #     mu_x[:, j] = return_mu1.squeeze(-1)
-        # for i, child in enumerate(self.children):
-        #     mu_c, co_c= child.forward(x_pred, **kwargs)
-        #     mu_temp[:, child.scope,child.scope], co_temp[:, child.scope,child.scope] = mu_c, co_c
-        # co_x = co_temp @ _wei + mu_temp.T*mu_temp @ _wei
-        # co_x = co_x-mu_temp.T*mu_temp
-        # mu_x = mu_temp
-        a = self.children[0].forward(x_pred, **kwargs)[1]
+        a = self.children[0].forward(x_pred, **kwargs)[1] # mu(mean) of two children
         b= self.children[1].forward(x_pred, **kwargs)[1]
-        c =self.children[0].forward(x_pred, **kwargs)[0]
-        print('c',c)
+        c =self.children[0].forward(x_pred, **kwargs)[0] #cov(covariance) matrix for two children
         d = self.children[1].forward(x_pred, **kwargs)[0]
+
         mu_x = c*self.weights[0]+d*self.weights[1]
         co1=a*self.weights[0]+b*self.weights[1]
-        print('co1',co1)
-        print('co1t',c.transpose((0,2,1)))
-        print(c*c.transpose((0,2,1)))
-        co2 = c*c.transpose((0,2,1))*self.weights[0]+d*d.transpose((0,2,1))*self.weights[1]
-        print('co2',co2)
-        co3 = c*self.weights[0]+d*self.weights[1]
-        print('co3',co3)
-        co_x = co1+co2-co3
+
+        t1 = tf.constant(c)
+        t2 = tf.constant(c.transpose((0,2,1)))
+        t3 = tf.matmul(t1,t2).eval(session=tf.compat.v1.Session())
+
+        t4 = tf.constant(d)
+        t5 = tf.constant(d.transpose((0, 2, 1)))
+        t6 = tf.matmul(t4, t5).eval(session=tf.compat.v1.Session())
+
+        co2 = t3*self.weights[0]+t6*self.weights[1]
+
+        co3 =t3+t6
+
+        co_x = co1+co2-co3 # covariance matrix of mixture distribution
+
         return mu_x, co_x
 
     def update(self):
@@ -64,11 +54,6 @@ class Sum:
         new_weights = np.exp(c_mllh)
         self.weights = new_weights / np.sum(new_weights)
 
-        # w_prior      = np.log(self.weights)
-        # c_mllh       = np.array([c.update() for c in self.children])
-        # w_post       = np.exp(w_prior + c_mllh)
-        # z            = np.sum(np.exp(w_post))
-        # self.weights = w_post / z
         return np.log(np.sum(new_weights))
 
     def __repr__(self, level=0, **kwargs):
@@ -101,12 +86,11 @@ class Split:
 
         left_idx = np.where(x_pred[:, self.dimension] <= (self.split + smudge * smudge_scale))[0]
         right_idx = np.where(x_pred[:, self.dimension] > (self.split - smudge * smudge_scale))[0]
-        print(left.scope)
+        # concatenate along axis=0
         mu_x[left_idx,:,:], co_x[left_idx,:,:] = left.forward(x_pred[left_idx], **kwargs)
         mu_x[right_idx,:,:], co_x[right_idx,:,:] = right.forward(x_pred[right_idx], **kwargs)
+
         return mu_x, co_x
-
-
 
     def update(self):
         return np.sum([c.update() for c in self.children])
@@ -131,32 +115,27 @@ class Productt:
         return None
 
     def forward(self, x_pred, **kwargs):
-        # if len(self.children) == 1:
-        #     r_ = self.children[0].forward(x_pred, **kwargs)
-        #     return r_[0].reshape(-1, 1), r_[1].reshape(-1, 1)
-        total_len = len(self.scope)
         mu_x = np.zeros((len(x_pred),1, y_d))
         co_x = np.zeros((len(x_pred), y_d,y_d ))
 
         if type(self.children[0]) is Sum:
             for i, child in enumerate(self.children):
                 mu_c, co_c= child.forward(x_pred, **kwargs)
-                mu_x[:,:, :], co_x[:, :,:] = mu_c, co_c
+                mu_x += mu_c
+                co_x += co_c
             return mu_x, co_x
+
         elif type(self.children[0]) is GP:
             for i, child in enumerate(self.children):
                 mu_c, co_c = child.forward(x_pred, **kwargs)
                 mu_x[:,0, child.scope], co_x[:, child.scope, child.scope] = mu_c.squeeze(-1), co_c.squeeze(-1)
             return mu_x, co_x
 
-        print('product shape',mu_x.shape)
 
     def update(self):
         return np.sum([c.update() for c in self.children])
-    def __repr__(self, level=0, **kwargs):
 
-        # _spl = Color.val(self.split, f=1, color='yellow')
-        # _dim = Color.val(self.dimension, f=0, color='orange', extra="dim=")
+    def __repr__(self, level=0, **kwargs):
         _sel = " " * (level - 1) + f"ⓛ Product scope={self.scope} "
         for child in self.children:
             _sel += f"\n{child.__repr__(level + 10)}"
@@ -224,13 +203,8 @@ class GP:
         self.count = kwargs['count']
 
     def forward(self, x_pred, **kwargs):
-        mu_x = np.zeros((len(x_pred), 1, y_d))
-        co_x = np.zeros((len(x_pred), y_d, y_d))
-        mu_gp, co_gp= self.predict1(x_pred)
-        # mu_x[:,0,self.scope]
-        # if dict.get(kwargs, 'store_results'):
-        #     self.stored_mu, self.stored_cov = mu_gp, co_gp
 
+        mu_gp, co_gp= self.predict1(x_pred)
         return mu_gp, co_gp,
 
     def update(self):
@@ -240,19 +214,10 @@ class GP:
         self.model.eval()
         self.likelihood.eval()
         x = torch.from_numpy(X_s).float()  # .to('cpu') #.cuda()
-        # y = torch.from_numpy(label_y.ravel()).float()
-        mll = ExactMarginalLogLikelihood(self.likelihood, self.model)
-        # test_dataset = TensorDataset(x, y)
-        # test_loader = DataLoader(test_dataset)
+
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             observed_pred = self.likelihood(self.model(x))
             pm, pv = observed_pred.mean, observed_pred.variance
-            lls = []
-            ##modified
-
-            # for x_batch, y_batch in test_loader:
-            #     lls.append(mll(self.model(x_batch),y_batch).item())
-
         x.detach()
 
         del x
