@@ -103,9 +103,6 @@ class Separator:
 
 class Product:
     def __init__(self, **kwargs):
-
-        # self.dimension = kwargs['dimension']
-        # self.parent = kwargs['parent']
         self.children = kwargs['children']
         self.maxs = kwargs['maxsy']
         self.mins = kwargs['minsy']
@@ -199,16 +196,10 @@ def get_splits(X, dd, **kwargs):
 def build_bins(**kwargs):
     X = kwargs['X']
     Y = kwargs['Y']
-    max_depth = dict.get(kwargs, 'max_depth', 8)
     min_samples = dict.get(kwargs, 'min_samples', 0)
-    max_samples = dict.get(kwargs, 'max_samples', 10 ** 4)
     qd = dict.get(kwargs, 'qd', 0)
     log = dict.get(kwargs, 'log', False)
     jump = dict.get(kwargs, 'jump', False)
-    reduce_branching = dict.get(kwargs, 'reduce_branching', False)
-    randomize_branching = dict.get(kwargs, 'randomize_branching', False)
-
-    # splits, features_mask = get_splits(X, qd, meta=dict.get(kwargs, 'meta', None), log=log)
 
     root_mixture_opts = {
         'mins': np.min(X, 0),
@@ -223,7 +214,8 @@ def build_bins(**kwargs):
     nsplits = Counter()
     root_node = Mixture(**root_mixture_opts)
     to_process, cache = [root_node], dict()
-    min_idx = 2000
+    min_idx = 4000 # indicates the threshold when building leaves instead of sum nodes
+    # the size of leaves is around min_dex/2
     count = 0
     while len(to_process):
         node = to_process.pop()
@@ -255,13 +247,10 @@ def build_bins(**kwargs):
                     for node_split in splits[d3]:
                         node_splits3.append(node_split)
 
-                    # r = beta.rvs(2, 2, size=10)
-                    # v = maxs[d]-mins[d]
                     q1 = np.percentile(X, 33, axis=0)
                     q3 = np.percentile(X, 66, axis=0)
                     node_splits_all = [np.median(node_splits), np.median(node_splits2)]
-                    # if len(node2.sum_scope)==1:
-                    #     node_splits_all=[q1[0],q3[0]]
+
                     if len(node_splits_all) == 0: raise Exception('1')
                     d = [d, d2, d3]
                     i = 0
@@ -344,8 +333,7 @@ def build_bins(**kwargs):
                                     results.append(Mixture(**mixture_opts))
 
                             else:
-                                # scope1 = [i for i in sum_scope[0:int(len(sum_scope)/2)]]
-                                # scope2 = [i for i in sum_scope[int(len(sum_scope)/2):]]
+                                # random selection for scopes
                                 scope1 = random.sample(scope, int(len(scope) / 2))
                                 scope2 = list(set(scope) - set(scope1))
                                 if len(idx) >= min_idx:
@@ -445,13 +433,10 @@ def build_bins(**kwargs):
             for node_split in splits[d3]:
                 node_splits3.append(node_split)
 
-            # r = beta.rvs(2, 2, size=10)
-            # v = maxs[d]-mins[d]
             q1 = np.percentile(X, 33, axis=0)
             q3 = np.percentile(X, 66, axis=0)
             node_splits_all = [np.median(node_splits), np.median(node_splits2)]
-            # if len(node.sum_scope)==1:
-            #     node_splits_all=[q1[0],q3[0]]
+
             if len(node_splits_all) == 0: raise Exception('1')
             d = [d, d2, d3]
             i = 0
@@ -533,8 +518,6 @@ def build_bins(**kwargs):
                             results.append(Mixture(**mixture_opts))
 
                     else:
-                        # scope1 = [i for i in sum_scope[0:int(len(sum_scope) / 2)]]
-                        # scope2 = [i for i in sum_scope[int(len(sum_scope) / 2):]]
                         a = int(len(scope) / 2)
                         scope1 = random.sample(scope, a)
                         scope2 = list(set(scope) - set(scope1))
