@@ -72,7 +72,7 @@ nlpd1=0
 # nlpd for multivariate gaussian distribution
 for i in range(mu.shape[0]):
     sigma = np.sqrt(np.abs(np.linalg.det(cov[i,:,:])))
-    d1 = (test.iloc[i, :2].values.reshape((1,1,2))-mu[i,:,:]).reshape((1,2))
+    d1 = (test.iloc[i, :3].values.reshape((1,1,3))-mu[i,:,:]).reshape((1,3))
     a = 1/(np.power((2*np.pi),y.shape[1]/2)*sigma)
     ni =np.linalg.pinv(cov[i, :, :])
     nlpd = -np.log(a * np.exp(np.dot(np.dot(-1 / 2 * d1, ni), d1.T)))
