@@ -33,13 +33,9 @@ class Sum:
         mu_x = c*self.weights[0]+d*self.weights[1]
         co1=a*self.weights[0]+b*self.weights[1]
 
-        t1 = tf.constant(c)
-        t2 = tf.constant(c.transpose((0,2,1)))
-        t3 = tf.matmul(t1,t2).eval(session=tf.compat.v1.Session())
+        t3 = np.matmul(c,c.transpose((0,2,1)))
 
-        t4 = tf.constant(d)
-        t5 = tf.constant(d.transpose((0, 2, 1)))
-        t6 = tf.matmul(t4, t5).eval(session=tf.compat.v1.Session())
+        t6 = np.matmul(d,d.transpose((0,2,1)))
 
         co2 = t3*self.weights[0]+t6*self.weights[1]
 
