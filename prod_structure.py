@@ -2,8 +2,11 @@ import numpy as np
 from collections import Counter
 from scipy.stats import beta, iqr
 import random
-
-
+import sys
+sys.path.append("/home/mzhu/madesi/mzhu_code/")
+from RCoT import *
+ddd = 4
+min_idx = 10000
 class Color():
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -58,8 +61,9 @@ class Mixture:
         self.n = kwargs['n']
         self.scope = dict.get(kwargs, 'scope', [])
         self.parent = dict.get(kwargs, 'parent', None)
-        self.splits = dict.get(kwargs, 'splits', []),  # for bins algo
+        self.splits = dict.get(kwargs, 'splits', [])  # for bins algo
         self.idx = dict.get(kwargs, 'idx', [])
+        # self.y = dict.get(kwargs, 'y', [])
         # assert np.all(self.spreads > 0)
 
     def __repr__(self, level=0):
@@ -85,12 +89,14 @@ class Mixture:
 class Separator:
     def __init__(self, **kwargs):
         self.split = kwargs['split']
+        self.splits = kwargs['splits']
         self.dimension = kwargs['dimension']
         self.depth = kwargs['depth']
         self.children = kwargs['children']
         self.parent = kwargs['parent']
         self.maxs = kwargs['maxs']
         self.mins = kwargs['mins']
+        # self.y = kwargs['y']
 
     def __repr__(self, level=0):
         _sel = " " * (level) + f"ⓛ Separator dim={self.dimension} split={round(self.split, 2)}"
@@ -162,6 +168,13 @@ def query(X, mins, maxs, skipleft=False):
             mask = mask & (X[:, d_] >= mins[d_]) & (X[:, d_] <= maxs[d_])
     return np.nonzero(mask)[0]
 
+def querym(X, mins, maxs,dm, skipleft=False):
+    if skipleft:
+        idx = np.where((X[:,dm]>mins[dm])&(X[:,dm]<=maxs[dm]))
+    else:
+        idx = np.where((X[:, dm] >= mins[dm]) & (X[:, dm] < maxs[dm]))
+
+    return idx
 
 def get_splits(X, dd, **kwargs):
     meta = dict.get(kwargs, 'meta', [""] * X.shape[1])
@@ -208,13 +221,14 @@ def build_bins(**kwargs):
         'scope': [i for i in range(Y.shape[1])],
         'parent': None,
         'dimension': np.argsort(-np.var(X, axis=0))[0],
-        'idx': X
+        'idx': X,
+        # 'y':Y
     }
 
     nsplits = Counter()
     root_node = Mixture(**root_mixture_opts)
     to_process, cache = [root_node], dict()
-    min_idx = 4000 # indicates the threshold when building leaves instead of sum nodes
+ # indicates the threshold when building leaves instead of sum nodes
     # the size of leaves is around min_dex/2
     count = 0
     while len(to_process):
@@ -222,124 +236,85 @@ def build_bins(**kwargs):
         if type(node) is Product:
             for i in range(len(node.children)):
                 node2 = node.children[i]
+
                 if type(node2) is Mixture:
                     d = node2.dimension
-                    X = node2.idx
-                    mins, maxs = np.min(X, 0), np.max(X, 0)
+                    x_node = node2.idx
+                    # y = node2.y
+                    mins_node, maxs_node = np.min(x_node, 0), np.max(x_node, 0)
                     splits, features_mask = get_splits(X, qd, meta=dict.get(kwargs, 'meta', None), log=log)
                     scope = node2.scope
-                    d_selected = np.argsort(-np.var(X, axis=0))
+                    d_selected = np.argsort(-np.var(x_node, axis=0))
                     d2 = d_selected[1]
                     d3 = d_selected[2]
+         
+                    quantiles = np.quantile(x_node, np.linspace(0, 1, num = ddd+2), axis=0).T
 
-                    fit_lhs = node2.mins < splits[:, 0]
-                    fit_rhs = node2.maxs > splits[:, -1]
-                    create = np.logical_and(fit_lhs, fit_rhs)
-                    create = np.logical_and(create, features_mask)
-                    node_splits = []
-                    node_splits2 = []
-                    node_splits3 = []
-                    for node_split in splits[d]:
-                        node_splits.append(node_split)
-                    for node_split in splits[d2]:
-                        node_splits2.append(node_split)
-
-                    for node_split in splits[d3]:
-                        node_splits3.append(node_split)
-
-                    q1 = np.percentile(X, 33, axis=0)
-                    q3 = np.percentile(X, 66, axis=0)
-                    node_splits_all = [np.median(node_splits), np.median(node_splits2)]
+                    node_splits_all = [1,2]
 
                     if len(node_splits_all) == 0: raise Exception('1')
                     d = [d, d2, d3]
-                    i = 0
-                    j = 0
+
                     m = 0
                     for split in node_splits_all:
-                        if m == 0:
-                            create_left = create.copy()
-                            create_right = create.copy()
-                            create_left[d[m]] = split != node_splits_all[0]
-                            create_right[d[m]] = split != node_splits_all[
-                                0]  # create left(right)nodes for splits other than the first/last split
-                        # no left nodes for the first split and no right nodes for the last split
 
-                        if m == 1:
-                            create_left = create.copy()
-                            create_right = create.copy()
-                            create_left[d[m]] = split != node_splits_all[1]
-                            create_right[d[m]] = split != node_splits_all[1]
+                        loop = []
+                        for i in range(ddd + 1):
+                            new_maxs, new_mins = maxs_node.copy(), mins_node.copy()
+                            skipleft = True
+                            if i == 0:
+                                skipleft = False
 
-                        if m == 2:
-                            create_left = create.copy()
-                            create_right = create.copy()
-                            create_left[d[m]] = split != node_splits_all[2]
-                            create_right[d[m]] = split != node_splits_all[2]
-                        if jump:
-                            # We force a new dimension for every child
-                            # on the same split level
-                            create_left[d[m]], create_right[d[m]] = False, False
-                            create_right[np.argmax(create_left)] = False
-                        else:
-                            # We dont create new mixture in the limits
-                            create_left[d[m]] = split != node_splits[0]
-                            create_right[d[m]] = split != node_splits[-1]
+                            new_mins[d[m]] = quantiles[d[m]][i]
+                            new_maxs[d[m]] = quantiles[d[m]][i + 1]
+                            idx_i = query(x_node, new_mins, new_maxs, skipleft=skipleft)
+                            loop.append(idx_i)
 
-                        new_maxs, new_mins = node2.maxs.copy(), node2.mins.copy()
-                        new_maxs[d[m]], new_mins[d[m]] = split, split
-
-                        idx_left = query(X, node2.mins, new_maxs, skipleft=False)
-                        idx_right = query(X, new_mins, node2.maxs, skipleft=True)
-                        print('left', len(idx_left))
-                        print('right', len(idx_right))
                         next_depth = node2.depth + 1
 
-                        loop = [
-                            ('left', create_left, idx_left, node.mins, new_maxs),
-                            ('right', create_right, idx_right, new_mins, node.maxs)
-                        ]
-
                         results = []
-                        for _, create_mixture, idx, mins, maxs, in loop:
-                            if min_samples == 0:
-                                min_samples = min(len(idx_left), len(idx_right)) + 1
-                            x_idx = X[idx]
+                        for idx in loop:
+
+                            x_idx = x_node[idx]
+                            maxs_loop = np.max(x_idx, axis=0)
+                            mins_loop = np.min(x_idx, axis=0)
+                            # y_idx = y[idx]
                             next_dimension = np.argsort(-np.var(x_idx, axis=0))[0]
                             if len(scope) == 1:
                                 if len(idx) < min_idx:
                                     gp = []
                                     prod_opts = {
-                                        'minsy': mins,
-                                        'maxsy': maxs,
+                                        'minsy': mins_loop,
+                                        'maxsy': maxs_loop,
                                         'scope': scope,
                                         'children': gp,
                                     }
 
                                     prod = Product(**prod_opts)
-                                    a = _cached_gp(cache, mins=mins, maxs=maxs, idx=idx, y=scope[0], parent=None)
+                                    a = _cached_gp(cache, mins=mins_loop, maxs=maxs_loop, idx=idx, y=scope[0], parent=None)
                                     gp.append(a)
                                     results.append(prod)
                                 else:
                                     mixture_opts = {
-                                        'mins': mins,
-                                        'maxs': maxs,
+                                        'mins': mins_loop,
+                                        'maxs': maxs_loop,
                                         'depth': next_depth,
                                         'dimension': next_dimension,
                                         'n': len(idx),
                                         'scope': scope,
-                                        'idx': x_idx
+                                        'idx': x_idx,
+                                        # 'y':y_idx
                                     }
                                     results.append(Mixture(**mixture_opts))
 
                             else:
-                                # random selection for scopes
-                                scope1 = random.sample(scope, int(len(scope) / 2))
+                                a = int(len(scope) / 2)
+                                scope1 = random.sample(scope, a)
                                 scope2 = list(set(scope) - set(scope1))
                                 if len(idx) >= min_idx:
                                     mixture_opts1 = {
-                                        'mins': mins,
-                                        'maxs': maxs,
+                                        'mins': mins_loop,
+                                        'maxs': maxs_loop,
                                         'depth': next_depth,
                                         'dimension': next_dimension,
                                         'n': len(idx),
@@ -347,8 +322,8 @@ def build_bins(**kwargs):
                                         'idx': x_idx
                                     }
                                     mixture_opts2 = {
-                                        'mins': mins,
-                                        'maxs': maxs,
+                                        'mins': mins_loop,
+                                        'maxs': maxs_loop,
                                         'depth': next_depth,
                                         'dimension': next_dimension,
                                         'n': len(idx),
@@ -356,10 +331,10 @@ def build_bins(**kwargs):
                                         'idx': x_idx
                                     }
                                     prod_opts = {
-                                        'minsy': mins,
-                                        'maxsy': maxs,
+                                        'minsy': mins_loop,
+                                        'maxsy': maxs_loop,
                                         'scope': scope1 + scope2,
-                                        'children': [Mixture(**mixture_opts1), Mixture(**mixture_opts2)],
+                                        'children': [Mixture(**mixture_opts1), Mixture(**mixture_opts2)]
                                     }
 
                                     prod = Product(**prod_opts)
@@ -367,31 +342,30 @@ def build_bins(**kwargs):
                                 else:
                                     gp = []
                                     prod_opts = {
-                                        'minsy': mins,
-                                        'maxsy': maxs,
-                                        'scope': scope1 + scope2,
+                                        'minsy': mins_loop,
+                                        'maxsy': maxs_loop,
+                                        'scope': scope1+scope2,
                                         'children': gp,
                                     }
 
                                     prod = Product(**prod_opts)
                                     for yi in prod.scope:
-                                        a = _cached_gp(cache, mins=mins, maxs=maxs, idx=idx, y=yi, parent=None)
+                                        a = _cached_gp(cache, mins=mins_loop, maxs=maxs_loop, idx=idx, y=yi, parent=None)
                                         gp.append(a)
                                         count += 1
                                     results.append(prod)
-                        j += 1
-                        m += 1
 
                         if len(results) != 1:
                             to_process.extend(results)
                             separator_opts = {
                                 'depth': node2.depth,
-                                'mins': mins,
-                                'maxs': maxs,
-                                'dimension': d[i],
+                                'mins': mins_node,
+                                'maxs': maxs_node,
+                                'dimension': d[m],
                                 'split': split,
                                 'children': results,
-                                'parent': None
+                                'parent': None,
+                                'splits':quantiles[d[m]]
                             }
                             node2.children.append(Separator(**separator_opts))
                         elif len(results) == 1:
@@ -399,132 +373,108 @@ def build_bins(**kwargs):
                             to_process.extend(results)
                         else:
                             raise Exception('1')
-                        i += 1
-
-
-
+                        m += 1
 
         elif type(node) is Mixture:
             d = node.dimension
-            X = node.idx
-            mins, maxs = np.min(X, 0), np.max(X, 0)
-            splits, features_mask = get_splits(X, qd, meta=dict.get(kwargs, 'meta', None), log=log)
+            x_node = node.idx
+            # y = node.y
+
+            mins_node, maxs_node = np.min(x_node, 0), np.max(x_node, 0)
+            # splits, features_mask = get_splits(X, qd, meta=dict.get(kwargs, 'meta', None), log=log)
             scope = node.scope
-            d_selected = np.argsort(-np.var(X, axis=0))
+            d_selected = np.argsort(-np.var(x_node, axis=0))
             d2 = d_selected[1]
             d3 = d_selected[2]
-
-            fit_lhs = node.mins < splits[:, 0]
-            fit_rhs = node.maxs > splits[:, -1]
-            create = np.logical_and(fit_lhs, fit_rhs)
-
-            create = np.logical_and(create, features_mask)
-            print('create', create)
-
+            quantiles = np.quantile(x_node, np.linspace(0, 1, num = ddd+2),axis=0).T
             # Preprocess splits
-            node_splits = []
-            node_splits2 = []
-            node_splits3 = []
-            for node_split in splits[d]:
-                node_splits.append(node_split)
-            for node_split in splits[d2]:
-                node_splits2.append(node_split)
 
-            for node_split in splits[d3]:
-                node_splits3.append(node_split)
-
-            q1 = np.percentile(X, 33, axis=0)
-            q3 = np.percentile(X, 66, axis=0)
-            node_splits_all = [np.median(node_splits), np.median(node_splits2)]
-
+            node_splits_all = [1,2]
             if len(node_splits_all) == 0: raise Exception('1')
             d = [d, d2, d3]
-            i = 0
-            j = 0
+
             m = 0
+            i=0
             for split in node_splits_all:
-                if m == 0:
-                    create_left = create.copy()
-                    create_right = create.copy()
-                    create_left[d[m]] = split != node_splits_all[0]
-                    create_right[d[m]] = split != node_splits_all[0]
+                loop = []
 
-                if m == 1:
-                    create_left = create.copy()
-                    create_right = create.copy()
-                    create_left[d[m]] = split != node_splits_all[1]
-                    create_right[d[m]] = split != node_splits_all[1]
+                for i in range(ddd+1):
+                    new_maxs, new_mins = maxs_node.copy(), mins_node.copy()
+                    skipleft = True
+                    if i == 0:
+                        skipleft = False
+                    new_mins[d[m]] = quantiles[d[m]][i]
+                    new_maxs[d[m]] = quantiles[d[m]][i+1]
+                    idx_i = query(x_node, new_mins, new_maxs, skipleft=skipleft)
+                    loop.append(idx_i)
 
-                if m == 2:
-                    create_left = create.copy()
-                    create_right = create.copy()
-                    create_left[d[m]] = split != node_splits_all[2]
-                    create_right[d[m]] = split != node_splits_all[2]
-                if jump:
-                    # We force a new dimension for every child
-                    # on the same split level
-                    create_left[d[m]], create_right[d[m]] = False, False
-                    create_right[np.argmax(create_left)] = False
-                else:
-                    # We dont create new mixture in the limits
-                    create_left[d[m]] = split != node_splits[0]
-                    create_right[d[m]] = split != node_splits[-1]
-
-                new_maxs, new_mins = node.maxs.copy(), node.mins.copy()
-                new_maxs[d[m]], new_mins[d[m]] = split, split
-
-                idx_left = query(X, node.mins, new_maxs, skipleft=False)
-                idx_right = query(X, new_mins, node.maxs, skipleft=True)
-                print('left', len(idx_left))
-                print('right', len(idx_right))
                 next_depth = node.depth + 1
-
-                loop = [
-                    ('left', create_left, idx_left, node.mins, new_maxs),
-                    ('right', create_right, idx_right, new_mins, node.maxs)
-                ]
+    
 
                 results = []
-                for _, create_mixture, idx, mins, maxs, in loop:
-                    if min_samples == 0:
-                        min_samples = min(len(idx_left), len(idx_right)) + 1
+                for idx in loop:
+                    x_idx = x_node[idx]
+                    maxs_loop = np.max(x_idx,axis=0)
+                    mins_loop = np.min(x_idx,axis=0)
+                    # y_idx = y[idx]
 
-                    x_idx = X[idx]
                     next_dimension = np.argsort(-np.var(x_idx, axis=0))[0]
                     if len(scope) == 1:
                         if len(idx) < min_idx:
                             gp = []
                             prod_opts = {
-                                'minsy': mins,
-                                'maxsy': maxs,
+                                'minsy': mins_loop,
+                                'maxsy': maxs_loop,
                                 'scope': scope,
                                 'children': gp,
                             }
 
                             prod = Product(**prod_opts)
-                            a = _cached_gp(cache, mins=mins, maxs=maxs, idx=idx, y=scope[0], parent=None)
+                            a = _cached_gp(cache, mins=mins_loop, maxs=maxs_loop, idx=idx, y=scope[0], parent=None)
                             gp.append(a)
                             results.append(prod)
                         else:
                             mixture_opts = {
-                                'mins': mins,
-                                'maxs': maxs,
+                                'mins': mins_loop,
+                                'maxs': maxs_loop,
                                 'depth': next_depth,
                                 'dimension': next_dimension,
                                 'n': len(idx),
                                 'scope': scope,
                                 'idx': x_idx
+
                             }
                             results.append(Mixture(**mixture_opts))
 
                     else:
                         a = int(len(scope) / 2)
+
+                        # cigroups = getCIGroup(x_idx,y_idx, scope=scope, alpha=0.01)
+                        # print(cigroups)
+                        # cigroup_all=[]
+                        # scope_prod = []
+                        # for sublist in cigroups:
+                        #     for item in sublist:
+                        #         scope_prod.append(item)
+                        # if len(idx) >= min_idx:
+                        #     for i,cigroup in enumerate(cigroups):
+                        #         mixture_opts = {
+                        #             'mins': mins,
+                        #             'maxs': maxs,
+                        #             'depth': next_depth,
+                        #             'dimension': next_dimension,
+                        #             'n': len(idx),
+                        #             'scope': cigroup,
+                        #             'idx': x_idx,
+                        #             'y': y_idx
+                        #         }
+                        #         cigroup_all.append(Mixture(**mixture_opts))
                         scope1 = random.sample(scope, a)
                         scope2 = list(set(scope) - set(scope1))
                         if len(idx) >= min_idx:
                             mixture_opts1 = {
-                                'mins': mins,
-                                'maxs': maxs,
+                                'mins': mins_loop,
+                                'maxs': maxs_loop,
                                 'depth': next_depth,
                                 'dimension': next_dimension,
                                 'n': len(idx),
@@ -532,8 +482,8 @@ def build_bins(**kwargs):
                                 'idx': x_idx
                             }
                             mixture_opts2 = {
-                                'mins': mins,
-                                'maxs': maxs,
+                                'mins': mins_loop,
+                                'maxs': maxs_loop,
                                 'depth': next_depth,
                                 'dimension': next_dimension,
                                 'n': len(idx),
@@ -541,10 +491,10 @@ def build_bins(**kwargs):
                                 'idx': x_idx
                             }
                             prod_opts = {
-                                'minsy': mins,
-                                'maxsy': maxs,
-                                'scope': scope1 + scope2,
-                                'children': [Mixture(**mixture_opts1), Mixture(**mixture_opts2)],
+                                'minsy': mins_loop,
+                                'maxsy': maxs_loop,
+                                'scope': scope1+scope2,
+                                'children': [Mixture(**mixture_opts1),Mixture(**mixture_opts2)]
                             }
 
                             prod = Product(**prod_opts)
@@ -552,30 +502,31 @@ def build_bins(**kwargs):
                         else:
                             gp = []
                             prod_opts = {
-                                'minsy': mins,
-                                'maxsy': maxs,
-                                'scope': scope1 + scope2,
+                                'minsy': mins_loop,
+                                'maxsy': maxs_loop,
+                                'scope': scope1+scope2,
                                 'children': gp,
                             }
 
                             prod = Product(**prod_opts)
                             for yi in prod.scope:
-                                a = _cached_gp(cache, mins=mins, maxs=maxs, idx=idx, y=yi, parent=None)
+                                a = _cached_gp(cache, mins=mins_loop, maxs=maxs_loop, idx=idx, y=yi, parent=None)
                                 gp.append(a)
                             results.append(prod)
-                j += 1
-                m += 1
+
+
 
                 if len(results) != 1:
                     to_process.extend(results)
                     separator_opts = {
                         'depth': node.depth,
-                        'mins': mins,
-                        'maxs': maxs,
-                        'dimension': d[i],
+                        'mins': mins_node,
+                        'maxs': maxs_node,
+                        'dimension': d[m],
                         'split': split,
                         'children': results,
-                        'parent': None
+                        'parent': None,
+                        'splits':quantiles[d[m]]
                     }
                     node.children.append(Separator(**separator_opts))
                 elif len(results) == 1:
@@ -583,7 +534,7 @@ def build_bins(**kwargs):
                     to_process.extend(results)
                 else:
                     raise Exception('1')
-                i += 1
+                m += 1
 
     gps = list(cache.values())
     aaa = [len(gp.idx) for gp in gps]
