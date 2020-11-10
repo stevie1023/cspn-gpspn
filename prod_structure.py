@@ -168,13 +168,6 @@ def query(X, mins, maxs, skipleft=False):
             mask = mask & (X[:, d_] >= mins[d_]) & (X[:, d_] <= maxs[d_])
     return np.nonzero(mask)[0]
 
-def querym(X, mins, maxs,dm, skipleft=False):
-    if skipleft:
-        idx = np.where((X[:,dm]>mins[dm])&(X[:,dm]<=maxs[dm]))
-    else:
-        idx = np.where((X[:, dm] >= mins[dm]) & (X[:, dm] < maxs[dm]))
-
-    return idx
 
 def get_splits(X, dd, **kwargs):
     meta = dict.get(kwargs, 'meta', [""] * X.shape[1])
@@ -233,7 +226,7 @@ def build_bins(**kwargs):
     count = 0
     while len(to_process):
         node = to_process.pop()
-        if type(node) is Product:
+        if type(node) is Product:   # after root (mixture), the second node to process is product node, we do the same thing again
             for i in range(len(node.children)):
                 node2 = node.children[i]
 
@@ -375,7 +368,7 @@ def build_bins(**kwargs):
                             raise Exception('1')
                         m += 1
 
-        elif type(node) is Mixture:
+        elif type(node) is Mixture:  # root is Mixture
             d = node.dimension
             x_node = node.idx
             # y = node.y
@@ -395,7 +388,7 @@ def build_bins(**kwargs):
 
             m = 0
             i=0
-            for split in node_splits_all:
+            for split in node_splits_all:  
                 loop = []
 
                 for i in range(ddd+1):
@@ -419,8 +412,8 @@ def build_bins(**kwargs):
                     # y_idx = y[idx]
 
                     next_dimension = np.argsort(-np.var(x_idx, axis=0))[0]
-                    if len(scope) == 1:
-                        if len(idx) < min_idx:
+                    if len(scope) == 1:        # mixture has only one channel for y;
+                        if len(idx) < min_idx:   # and the length of this mixture (sum) is < some threshold, we enforce one gp leave directly;
                             gp = []
                             prod_opts = {
                                 'minsy': mins_loop,
@@ -433,7 +426,7 @@ def build_bins(**kwargs):
                             a = _cached_gp(cache, mins=mins_loop, maxs=maxs_loop, idx=idx, y=scope[0], parent=None)
                             gp.append(a)
                             results.append(prod)
-                        else:
+                        else:                 # the length of this mixture is large, so we enforce mixture (sum) again;
                             mixture_opts = {
                                 'mins': mins_loop,
                                 'maxs': maxs_loop,
@@ -446,35 +439,14 @@ def build_bins(**kwargs):
                             }
                             results.append(Mixture(**mixture_opts))
 
-                    else:
+                    else:                      # the following is for mixtures with multivariate y;
                         a = int(len(scope) / 2)
-
-                        # cigroups = getCIGroup(x_idx,y_idx, scope=scope, alpha=0.01)
-                        # print(cigroups)
-                        # cigroup_all=[]
-                        # scope_prod = []
-                        # for sublist in cigroups:
-                        #     for item in sublist:
-                        #         scope_prod.append(item)
-                        # if len(idx) >= min_idx:
-                        #     for i,cigroup in enumerate(cigroups):
-                        #         mixture_opts = {
-                        #             'mins': mins,
-                        #             'maxs': maxs,
-                        #             'depth': next_depth,
-                        #             'dimension': next_dimension,
-                        #             'n': len(idx),
-                        #             'scope': cigroup,
-                        #             'idx': x_idx,
-                        #             'y': y_idx
-                        #         }
-                        #         cigroup_all.append(Mixture(**mixture_opts))
-                        scope1 = random.sample(scope, a)
+                        scope1 = random.sample(scope, a)   # here randomly split output space y;
                         scope2 = list(set(scope) - set(scope1))
-                        if len(idx) >= min_idx:
-                            mixture_opts1 = {
-                                'mins': mins_loop,
-                                'maxs': maxs_loop,
+                        if len(idx) >= min_idx:       # length of the mixture >= some threshold, we enforce two mixtures as children for the product nodde
+                            mixture_opts1 = {         # that split output space; 
+                                'mins': mins_loop,  # (this layer of prod_node-- mixture is actually not yet connected to the first root node,
+                                'maxs': maxs_loop,  # we create a split node(separator below) to connect)
                                 'depth': next_depth,
                                 'dimension': next_dimension,
                                 'n': len(idx),
@@ -499,7 +471,7 @@ def build_bins(**kwargs):
 
                             prod = Product(**prod_opts)
                             results.append(prod)
-                        else:
+                        else:             #length of mixture is small enough, we have gp leaves for every y directly;
                             gp = []
                             prod_opts = {
                                 'minsy': mins_loop,
@@ -516,9 +488,9 @@ def build_bins(**kwargs):
 
 
 
-                if len(results) != 1:
-                    to_process.extend(results)
-                    separator_opts = {
+                if len(results) != 1:             # here we create a separator(split node) to connect the mixtures / gps / product nodes above 
+                    to_process.extend(results)    # from line 415 with the first root node!!)
+                    separator_opts = { 
                         'depth': node.depth,
                         'mins': mins_node,
                         'maxs': maxs_node,
