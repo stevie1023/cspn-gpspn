@@ -5,7 +5,7 @@ import random
 import sys
 sys.path.append("/home/mzhu/madesi/mzhu_code/")
 from RCoT import *
-ddd = 4
+ddd = 9
 min_idx = 10000
 class Color():
     HEADER = '\033[95m'
