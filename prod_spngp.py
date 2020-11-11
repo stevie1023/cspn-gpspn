@@ -6,21 +6,35 @@ from prod_structure import query, build_bins
 from prod_inference import structure
 import sys
 from sklearn.linear_model import SGDRegressor
-
+import pickle
+import dill
 from sklearn.linear_model import BayesianRidge, LinearRegression
 from scipy import stats
-np.random.seed(58)
-data = pd.read_csv('/home/mzhu/madesi/madesi/mzhu_code/10000normal.csv')
-data = pd.DataFrame(data).dropna()  # miss = data.isnull().sum()/len(data)
-dmean, dstd = data.mean(), data.std()
-data = (data - dmean) / dstd
 
-train = data.sample(frac=0.8, random_state=58)
-test = data.drop(train.index)
-
-x, y = train.iloc[:, 3:].values, train.iloc[:, :3].values
-
-
+x= pd.read_csv('/home/mzhu/madesi/datasets/datasets/parkinsons/x_train.csv')
+x1 = pd.read_csv('/home/mzhu/madesi/datasets/datasets/parkinsons/x_test.csv')
+y = pd.read_csv('/home/mzhu/madesi/datasets/datasets/parkinsons/y_train.csv')
+y1= pd.read_csv('/home/mzhu/madesi/datasets/datasets/parkinsons/y_test.csv')
+#
+mu1,std1 =x.mean(),x.std()
+mu2,std2 = x1.mean(),x1.std()
+mu3,std3 =y.mean(),y.std()
+mu4,std4 = y1.mean(),y1.std()
+x = (x-mu1)/std1 # normalized train_x
+x1 = (x1-mu2)/std2 # test_x
+y = (y-mu3)/std3 # train_y
+y1 = (y1-mu4)/std4 #test_y
+y_d = y.shape[1]
+x = x.iloc[:,:].values
+x_original = x.copy()
+x1 = x1.iloc[:,:].values
+y = y.iloc[:,:].values
+y_orginal = y.copy()
+y1 = y1.iloc[:,:].values
+noise = np.random.normal(0, .01, x.shape)
+x = noise + x
+noise2 = np.random.normal(0, .01, y.shape)
+y = noise2 + y
 opts = {
     'min_samples': 0,
     'X': x,
@@ -38,51 +52,55 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 
 for i, gp in enumerate(gps):
     idx = query(x, gp.mins, gp.maxs)
-    gp.x = x[idx]
-    y_scope = y[:,gp.scope]
-    print(gp.scope)
+    gp.x = x_original[idx]
+    y_scope = y_orginal[:,gp.scope]
+
     gp.y = y_scope[idx]
 
     print(f"Training GP {i + 1}/{len(gps)} ({len(idx)})")
     gp.init(cuda=True)
 
 root.update()
+mll = root.mll
 
+# filename = 'usflight4childrennew.dill'
+# dill.dump(root, open(filename, 'wb'))
+
+mu, cov= root.forward(x1[:,:], smudge=0)
+
+mu_s1 = mu[:,0, 0]
+mu_s2 = mu[:,0, 1]
+
+sqe1 = (mu_s1 - y1[:,0]) ** 2
+sqe2 = (mu_s2 - y1[:,1]) ** 2
 #
-mu, cov = root.forward(test.iloc[:, 3:].values, smudge=0)
-mu_s1 = (mu[:,0,0].ravel() * dstd.iloc[0]) + dmean.iloc[0]
-mu_s2 = (mu[:,0,1].ravel() * dstd.iloc[1]) + dmean.iloc[1]
-mu_s3 = (mu[:,0,2].ravel() * dstd.iloc[2]) + dmean.iloc[2]
+rmse1 = np.sqrt(sqe1.sum() / len(y1))
+rmse2 = np.sqrt(sqe2.sum() / len(y1))
 
-mu_t1 = (test.iloc[:, 0] * dstd.iloc[0]) + dmean.iloc[0]
-mu_t2 = (test.iloc[:, 1] * dstd.iloc[1]) + dmean.iloc[1]
-mu_t3 = (test.iloc[:, 2] * dstd.iloc[2]) + dmean.iloc[2]
+mae1 = np.sqrt(sqe1).sum() / len(y1)
+mae2 = np.sqrt(sqe2).sum() / len(y1)
 
-sqe1 = (mu_s1 - mu_t1.values) ** 2
-sqe2 = (mu_s2 - mu_t2.values) ** 2
-sqe3 = (mu_s3 - mu_t3.values) ** 2
-rmse1 = np.sqrt(sqe1.sum() / len(test))
-rmse2 = np.sqrt(sqe2.sum() / len(test))
-rmse3 = np.sqrt(sqe3.sum() / len(test))
-mae1 = np.sqrt(sqe1).sum() / len(test)
-mae2 = np.sqrt(sqe2).sum() / len(test)
-mae3 = np.sqrt(sqe3).sum() / len(test)
 
 nlpd1=0
 # nlpd for multivariate gaussian distribution
+
 for i in range(mu.shape[0]):
     sigma = np.sqrt(np.abs(np.linalg.det(cov[i,:,:])))
-    d1 = (test.iloc[i, :3].values.reshape((1,1,3))-mu[i,:,:]).reshape((1,3))
+    # d1 = (test.iloc[i,:3].values.reshape((1,1,y_d))-mu[i,:,:]).reshape((1,y_d))
+    d1 = (y1[i, :].reshape((1, 1, y_d)) - mu[i, :, :]).reshape((1, y_d))
     a = 1/(np.power((2*np.pi),y.shape[1]/2)*sigma)
     ni =np.linalg.pinv(cov[i, :, :])
-    nlpd = -np.log(a * np.exp(np.dot(np.dot(-1 / 2 * d1, ni), d1.T)))
+    b = a * np.exp(np.dot(np.dot(-1 / 2 * d1, ni), d1.T))
+    if b > 0.0000000001:
+        nlpd = -np.log(b)
+    else:
+        nlpd = 0
 
     nlpd1+=nlpd
 
-nlpd2 = nlpd1/len(test)
+nlpd2 = nlpd1/len(y1)
 
-
-print(f"SPN-GP  RMSE1: {rmse1}, RMSE2: {rmse2},RMSE3: {rmse3}")
-print(f"SPN-GP  MAE1: {mae1}, MAE2: {mae2},MAE3: {mae3}")
+print(f"SPN-GP  RMSE1: {rmse1}, RMSE2: {rmse2}")
+print(f"SPN-GP  MAE1: {mae1}, MAE2: {mae2}")
 print(f"SPN-GP  NLPD: {nlpd2}")
 
