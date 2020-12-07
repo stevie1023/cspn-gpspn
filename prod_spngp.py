@@ -51,30 +51,29 @@ root_region, gps_ = build_bins(**opts)
 root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_types=['rbf'])
 # lr = 0.1
 # steps = 200
-# likelihood_scope = [GaussianLikelihood().train(),GaussianLikelihood().train(),GaussianLikelihood().train()]
+# likelihood_scope = [GaussianLikelihood().train(),GaussianLikelihood().train()]
 # tensor_x = torch.from_numpy(np.zeros((100,1))).float().to('cpu')
 # tensor_y = torch.from_numpy(np.zeros((100,1))).float().to('cpu')
 # model_scope = [ExactGPModel(x = tensor_x,y = tensor_y,likelihood = likelihood_scope[i], type='rbf_ard') for i in range(y.shape[1])]
 # l0=list(model_scope[0].parameters())
 # l0.extend(list(model_scope[1].parameters()))
-# l0.extend(list(model_scope[2].parameters()))
 # for param in l0:
 #     print(f'value = {param.item()}')
 #
 # optimizer_scope = Adam([{'params':l0}], lr=lr)
 
 # model_scope = [i.to('cpu') for i in model_scope]
-# mll = [ExactMarginalLogLikelihood(likelihood_scope[i], model_scope[i]) for i in range(y.shape[1])]
+
 # for i in range(steps): #这是优化的大循环，优化共#steps步
 #     tree_loss = [0] * y.shape[1]
 #     tree_scope = [0] * y.shape[1]
-#     optimizer_scope.zero_grad()# Zero gradients from previous iteration
+#     optimizer_scope.zero_grad()
 #     for j, gp in enumerate(gps):
 #         idx = query(x, gp.mins, gp.maxs)
 #         gp.x = x[idx]
 #         y_scope = y[:,gp.scope]
 #         gp.y = y_scope[idx]
-#         cuda_ = False
+#         cuda_ = True
 #         temp_device = torch.device("cuda" if cuda_ else "cpu")
 #         if cuda_:
 #             torch.cuda.empty_cache()
@@ -82,9 +81,11 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 #         y_temp = torch.from_numpy(gp.y.ravel()).float().to(temp_device)
 #         model_scope[gp.scope].set_train_data(inputs=x_temp, targets=y_temp, strict=False)
 #         model_scope[gp.scope].train()
-#         # mll = ExactMarginalLogLikelihood(likelihood_scope[gp.scope], model_scope[gp.scope])
+#         mll = ExactMarginalLogLikelihood(likelihood_scope[gp.scope], model_scope[gp.scope])
+#         # for param_name, param in mll.named_parameters():
+#         #     print(f'Parameter namemll0: {param_name:42} value = {param.item()}')
 #         output = model_scope[gp.scope](x_temp)  # Output from model
-#         loss = -mll[gp.scope](output, y_temp)  # Calc loss and backprop gradients
+#         loss = -mll(output, y_temp)
 #         x_temp.detach()
 #         y_temp.detach()
 #         del x_temp
@@ -94,9 +95,10 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 #         gc.collect()
 #         tree_loss[gp.scope] += loss #计算并累加每个叶子的loss
 #         tree_scope[gp.scope] += 1
-#
-#     tree_loss_all = np.sum(tree_loss)
+
+#     tree_loss_all = tree_loss[0]+tree_loss[1]
 #     print('loss',tree_loss_all.item())
+
 #     tree_loss_all.backward()
 #     optimizer_scope.step()
 #   
@@ -108,19 +110,21 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 #     print(f'Parameter name2: {param_name:42} value = {param.item()}')
 #
 # for i, gp in enumerate(gps):
-#     x_temp = torch.from_numpy(gp.x).float().to('cpu')
-#     y_temp = torch.from_numpy(gp.y.ravel()).float().to('cpu')
+#     x_temp = torch.from_numpy(gp.x).float().to('cuda')
+#     y_temp = torch.from_numpy(gp.y.ravel()).float().to('cuda')
 #     model_scope[gp.scope].set_train_data(inputs=x_temp, targets=y_temp, strict=False)
 #     output = model_scope[gp.scope](x_temp)  # Output from model
-#     gp.mll = mll[gp.scope](output, y_temp).item()
 #     gp.likelihood = likelihood_scope[gp.scope]
 #     gp.model = model_scope[gp.scope]
+#     mll = ExactMarginalLogLikelihood(gp.likelihood, gp.model)
+#     gp.mll = mll(output, y_temp).item()
 #     x_temp.detach()
 #     y_temp.detach()
 #     del x_temp
 #     del y_temp
 #     x_temp = y_temp = None
 #     torch.cuda.empty_cache()
+
 
 for i, gp in enumerate(gps):
     idx = query(x, gp.mins, gp.maxs)
