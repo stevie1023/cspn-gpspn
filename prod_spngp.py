@@ -62,7 +62,7 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 #
 # optimizer_scope = Adam([{'params':l0}], lr=lr)
 
-# model_scope = [i.to('cpu') for i in model_scope]
+# model_scope = [i.to('cuda') for i in model_scope]
 
 # for i in range(steps): #这是优化的大循环，优化共#steps步
 #     tree_loss = [0] * y.shape[1]
