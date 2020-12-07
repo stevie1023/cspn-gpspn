@@ -52,8 +52,8 @@ root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_typ
 # lr = 0.1
 # steps = 200
 # likelihood_scope = [GaussianLikelihood().train(),GaussianLikelihood().train()]
-# tensor_x = torch.from_numpy(np.zeros((100,1))).float().to('cpu')
-# tensor_y = torch.from_numpy(np.zeros((100,1))).float().to('cpu')
+# tensor_x = torch.from_numpy(np.zeros((100,1))).float().to('cuda')
+# tensor_y = torch.from_numpy(np.zeros((100,1))).float().to('cuda')
 # model_scope = [ExactGPModel(x = tensor_x,y = tensor_y,likelihood = likelihood_scope[i], type='rbf_ard') for i in range(y.shape[1])]
 # l0=list(model_scope[0].parameters())
 # l0.extend(list(model_scope[1].parameters()))
