@@ -88,11 +88,21 @@ class Split:
         # # left, right = self.children[0], self.children[1]
         # left, right = self.children[0], self.children[-1]
         # middleft,middleright = self.children[1],self.children[2]
-
         for i, child in enumerate(self.children):
-            if i < len(self.children):
+            if i < len(self.children) :
                 idx = np.where((x_pred[:, self.dimension]>self.splits[i]) & (x_pred[:, self.dimension] <= self.splits[i+1]))[0]
             mu_x[idx, :, :], co_x[idx, :, :] = child.forward(x_pred[idx], **kwargs)
+
+
+        # left_idx = np.where(x_pred[:, self.dimension] <= self.q1 )[0]
+        # right_idx = np.where(x_pred[:, self.dimension] > self.q3 )[0]
+        # middleft_idx = np.where((x_pred[:, self.dimension]>self.q1) & (x_pred[:, self.dimension] <= self.split) )[0]
+        # middleright_idx = np.where((x_pred[:, self.dimension]>self.split) & (x_pred[:, self.dimension]<=self.q3 ))[0]
+        # # concatenate along axis=0
+        # mu_x[left_idx,:,:], co_x[left_idx,:,:] = left.forward(x_pred[left_idx], **kwargs)
+        # mu_x[right_idx,:,:], co_x[right_idx,:,:] = right.forward(x_pred[right_idx], **kwargs)
+        # mu_x[middleft_idx, :, :], co_x[middleft_idx, :, :] = middleright.forward(x_pred[middleft_idx], **kwargs)
+        # mu_x[middleright_idx, :, :], co_x[middleright_idx, :, :] = middleright.forward(x_pred[middleright_idx], **kwargs)
         return mu_x, co_x
 
     def update(self):
@@ -153,9 +163,13 @@ class Productt:
 
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, **kwargs):
-        x, y = kwargs['x'], kwargs['y']
-        likelihood = kwargs['likelihood']
-        gp_type = kwargs['type']
+        # x, y = kwargs['x'], kwargs['y']
+        x = dict.get(kwargs,'x')
+        y = dict.get(kwargs,'y')
+        likelihood = dict.get(kwargs,'likelihood')
+        # gp_type = kwargs['type']
+        gp_type = dict.get(kwargs,'type')
+        # super(ExactGPModel, self).set_train_data(x, y, strict=False)
         xd = x.shape[1]
 
         active_dims = torch.tensor(list(range(xd)))
@@ -210,36 +224,57 @@ class GP:
         self.y = dict.get(kwargs, 'y', [])
         self.count = kwargs['count']
 
+
+
+
+
+
     def forward(self, x_pred, **kwargs):
 
-        mu_gp, co_gp = self.predict1(x_pred)
+        mu_gp, co_gp = self.predict1(x_pred,**kwargs)
         return mu_gp, co_gp
 
     def update(self):
         return self.mll  # np.log(self.n)*0.01 #-self.mll - 1/np.log(self.n)
 
-    def predict1(self, X_s):
+    def predict1(self, X_s, **kwargs):
         # if X_s.shape[0] != 0:
-
+        device_ = torch.device("cuda")
+        # device_ = torch.device("cuda")  # .to('cpu') #.cuda()
+        self.model = self.model.to(device_)
         self.model.eval()
         self.likelihood.eval()
-        x = torch.from_numpy(X_s).float()  # .to('cpu') #.cuda()
+
+        # likelihood = dict.get(kwargs,'likelihood')
+        # likelihood[self.scope].eval()
+        # model = dict.get(kwargs, 'model')
+        # model[self.scope].eval()
+        # x = torch.from_numpy(X_s).float()
+        x = torch.from_numpy(X_s).float().to(device_)
+        # noises = torch.ones(len(X_s)) * 0.01
+        # noises = noises.to(self.device)
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            if x.shape[0]!=0:
 
+                # observed_pred = self.likelihood(self.model(x),noise=noises)
                 observed_pred = self.likelihood(self.model(x))
+                # observed_pred = likelihood[self.scope](model[self.scope](x))
                 pm, pv = observed_pred.mean, observed_pred.variance
-
-            else:
-                pm, pv = torch.zeros([1, 1], dtype=torch.float32),torch.zeros([1, 1], dtype=torch.float32)
+                pm_ = pm.detach().cpu()
+                pv_ = pv.detach().cpu()
+                del observed_pred,pm,pv,self.model
+                torch.cuda.empty_cache()
+                gc.collect()
         x.detach()
         del x
         torch.cuda.empty_cache()
 
+
         gc.collect()
+
         # modified
-        return pm.detach().cpu(), pv.detach().cpu()
+        # return pm.detach().cpu(), pv.detach().cpu()
+        return pm_, pv_
 
     def init(self, **kwargs):
         lr = dict.get(kwargs, 'lr', 0.20)
@@ -254,9 +289,9 @@ class GP:
         self.x = torch.from_numpy(self.x).float().to(self.device)
         self.y = torch.from_numpy(self.y.ravel()).float().to(self.device)
 
+        noises = torch.ones(self.n) * 0.001
 
-        # noises = torch.ones(self.n) * 1
-        # self.likelihood = FixedNoiseGaussianLikelihood(noise=noises, learn_additional_noise=True)
+#         self.likelihood = FixedNoiseGaussianLikelihood(noise=noises, learn_additional_noise=True)
         self.likelihood = GaussianLikelihood()
         self.likelihood.train()
         # noise_constraint=gpytorch.constraints.LessThan(1e-2))
@@ -321,6 +356,22 @@ class GP:
         return " " * (level) + f"{_wei} ⚄ GP ({self.type}) {_rng} {_cnt} {_mll}"
 
 
+
+    def __repr__(self, level=0, **kwargs):
+        _wei = dict.get(kwargs, 'extra')
+        _wei = Color.flt(_wei) if _wei else ""
+
+        _rou = 2
+        _rng = [f"{round(self.mins[i], _rou)}-{round(self.maxs[i], _rou)}" for i, _ in enumerate(self.mins)]
+
+        if self.n is not None:
+            _cnt = Color.val(self.n, f=0, color='green', extra="n=")
+        else:
+            _cnt = 0
+
+        _mll = Color.val(self.mll, f=3, color='orange', extra="mllh=")
+        return " " * (level) + f"{_wei} ⚄ GP ({self.type}) {_rng} {_cnt} {_mll}"
+
 def structure(root_region, scope,**kwargs):
     count=0
     root = Sum(scope=scope)
@@ -332,12 +383,28 @@ def structure(root_region, scope,**kwargs):
 
         if type(gro) is Mixture:
             for child in gro.children:
-                if type(child) == Separator:
+                if type(child) is Separator:
                     _child = Split(split=child.split, depth=child.depth, dimension=child.dimension,splits=child.splits)
                     sto.children.append(_child)
                     _cn = len(sto.children)
                     sto.weights = np.ones(_cn) / _cn
+                # elif type(child) is Product:
+                #     scope = child.scope
+                #     _child = Productt(scope = scope)
+                #     sto.children.append(_child)
+                # elif type(child) is Mixture:
+                #     scope = child.scope
+                #     _child = Sum(scope=scope)
+                #     sto.children.append(_child)
+                # elif type(child) is GPMixture:
+                #     gp_type = 'rbf'
+                #     scopee = gro.scope
+                #     key = (*gro.mins, *gro.maxs, gp_type, count, scopee[i])
+                #     gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs, count=count, scope=scopee[i])
+                #     count += 1
+                #     sto.children.append(gps[key])
                 else:
+                    print(type(child))
                     raise Exception('1')
             to_process.extend(zip(gro.children, sto.children))
         elif type(gro) is Separator: # sto is Split
@@ -350,13 +417,20 @@ def structure(root_region, scope,**kwargs):
                     scope = child.scope
                     _child = Sum(scope=scope)
                     sto.children.append(_child)
-                elif type(child) is GPMixture:
-                    gp_type = 'rbf'
-                    scopee = gro.scope
-                    key = (*gro.mins, *gro.maxs, gp_type, count, scopee[i])
-                    gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs, count=count, scope=scopee[i])
-                    count += 1
-                    sto.children.append(gps[key])
+                elif type(child) is Separator:
+                    _child = Split(split=child.split, depth=child.depth, dimension=child.dimension,splits=child.splits)
+                    sto.children.append(_child)
+                    _cn = len(sto.children)
+                    sto.weights = np.ones(_cn) / _cn
+                # elif type(child) is GPMixture:
+                #     gp_type = 'rbf'
+                #     scopee = gro.scope
+                #     key = (*gro.mins, *gro.maxs, gp_type, count, scopee[i])
+                #     gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs, count=count, scope=scopee[i])
+                #     count += 1
+                #     sto.children.append(gps[key])
+                else:
+                    raise Exception('1')
 
             to_process.extend(zip(gro.children, sto.children))
 
@@ -370,8 +444,11 @@ def structure(root_region, scope,**kwargs):
                 elif type(child) is GPMixture:
                     gp_type = 'rbf'
                     scopee = gro.scope
-                    key = (*gro.mins, *gro.maxs, gp_type, count,scopee[i])
-                    gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs,count = count, scope=scopee[i])
+                    # key = (*gro.mins, *gro.maxs, gp_type,gro.collect,count,scopee[i])
+                    # gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs,collect = gro.collect,count = count, scope=scopee[i])
+                    key = (*gro.mins, *gro.maxs, gp_type, count, scopee[i])
+                    gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs, count=count,
+                                  scope=scopee[i])
                     count+=1
                     sto.children.append(gps[key])
                     i += 1
