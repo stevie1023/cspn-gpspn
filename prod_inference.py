@@ -51,6 +51,12 @@ class Sum:
         self.mll = c_mllh @_wei
 
         return np.log(np.sum(new_weights))
+    
+    def update_mll(self):
+        c_mllh = np.array([c.update_mll() for c in self.children])
+
+        _wei = np.array(self.weights).reshape((-1, 1))
+        return c_mllh @ _wei
 
         # w_prior      = np.log(self.weights)
         # c_mllh       = np.array([c.update() for c in self.children])
@@ -108,6 +114,9 @@ class Split:
     def update(self):
         return np.sum([c.update() for c in self.children])
         # return np.log(np.sum([c.update() for c in self.children])))
+        
+    def update_mll(self):
+        return np.sum([c.update_mll() for c in self.children])
 
     def __repr__(self, level=0, **kwargs):
         _wei = dict.get(kwargs, 'extra')
@@ -152,6 +161,9 @@ class Productt:
 
     def update(self):
         return np.sum([c.update() for c in self.children])
+    
+    def update_mll(self):
+        return np.sum([c.update_mll() for c in self.children])
 
     def __repr__(self, level=0, **kwargs):
         _sel = " " * (level - 1) + f"ⓛ Product scope={self.scope} "
@@ -236,6 +248,9 @@ class GP:
 
     def update(self):
         return self.mll  # np.log(self.n)*0.01 #-self.mll - 1/np.log(self.n)
+    
+    def update_mll(self):
+        return self.mll_grad
 
     def predict1(self, X_s, **kwargs):
         # if X_s.shape[0] != 0:
