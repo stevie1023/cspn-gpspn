@@ -6,11 +6,12 @@ import gpytorch
 from gpytorch.kernels import *
 from gpytorch.likelihoods import *
 from gpytorch.mlls import *
+from random import randint
 from torch.optim import *
 from prod_structure import Product
 from torch.utils.data import TensorDataset, DataLoader
-
-y_d =2 ## indicates the scope of y
+from scipy.special import logsumexp
+ ## y_d indicates the scope of y
 
 class Sum:
     def __init__(self, **kwargs):
@@ -23,18 +24,21 @@ class Sum:
     def forward(self, x_pred, **kwargs):
         if len(self.children) == 1:
             r_ = self.children[0].forward(x_pred, **kwargs)
-            return r_[0].reshape(-1, 1), r_[1].reshape(-1, 1),r_[2]
+            return r_[0],r_[1]
+
         _wei = np.array(self.weights).reshape((-1,1))
 
         c,a= self.children[0].forward(x_pred, **kwargs)
         d,b = self.children[1].forward(x_pred, **kwargs)
+        # m3, c3 = self.children[2].forward(x_pred, **kwargs)
+        # m4, c4 = self.children[3].forward(x_pred, **kwargs)
 
         mu_x = c*self.weights[0]+d*self.weights[1]
-
-
         co1=a*self.weights[0]+b*self.weights[1]
         t3 = np.matmul(c,c.transpose((0,2,1)))
         t6 = np.matmul(d,d.transpose((0,2,1)))
+        # t4 = np.matmul(m3, m3.transpose((0, 2, 1)))
+        # t7 = np.matmul(m4, m4.transpose((0, 2, 1)))
         co2 = t3*self.weights[0]+t6*self.weights[1]
         e = c*self.weights[0]+d*self.weights[1]
         co3 = np.matmul(e,e.transpose((0,2,1)))
@@ -48,15 +52,36 @@ class Sum:
         new_weights = np.exp(c_mllh)
         self.weights = new_weights / np.sum(new_weights)
         _wei = np.array(self.weights).reshape((-1, 1))
-        self.mll = c_mllh @_wei
+        # self.mll = c_mllh @_wei
 
         return np.log(np.sum(new_weights))
-    
-    def update_mll(self):
-        c_mllh = np.array([c.update_mll() for c in self.children])
 
-        _wei = np.array(self.weights).reshape((-1, 1))
-        return c_mllh @ _wei
+    def update_mll(self):
+        if len(self.children)==2:
+
+            # w_exp1 = torch.exp(self.children[0].update_mll())
+            # w_exp2 = torch.exp(self.children[1].update_mll())
+            # # _wei = torch.FloatTensor(self.weights).reshape((-1, 1))
+            # w_sum = w_exp1* self.weights[0]+w_exp2*self.weights[1]
+            # # w_sum = w_exp1*self.weights[0]
+            # w_log = torch.log(w_sum)
+            a = torch.stack((self.children[0].update_mll(),self.children[1].update_mll()))
+            w_log = torch.logsumexp(a,0)+torch.log(torch.tensor(0.5))
+            return w_log
+
+        elif len(self.children)==1:
+            # w_exp1 = torch.exp(self.children[0].update_mll())
+            # w_sum = w_exp1 * self.weights[0]
+            # w_log = torch.log(w_sum)
+            a = self.children[0].update_mll()
+            w_log = torch.logsumexp(a, 0) + torch.log(torch.tensor(0.5))
+            return w_log
+        else:
+            raise Exception(1)
+
+
+
+
 
         # w_prior      = np.log(self.weights)
         # c_mllh       = np.array([c.update() for c in self.children])
@@ -89,6 +114,7 @@ class Split:
         return None
 
     def forward(self, x_pred, **kwargs):
+        y_d = dict.get(kwargs, 'y_d', 0)
         mu_x = np.zeros((len(x_pred),1, y_d))
         co_x = np.zeros((len(x_pred), y_d,y_d))
         # # left, right = self.children[0], self.children[1]
@@ -114,9 +140,15 @@ class Split:
     def update(self):
         return np.sum([c.update() for c in self.children])
         # return np.log(np.sum([c.update() for c in self.children])))
-        
+
     def update_mll(self):
-        return np.sum([c.update_mll() for c in self.children])
+        # a = torch.sum(torch.tensor([c.update_mll() for c in self.children],requires_grad=True))
+
+        sum=0
+        for c in self.children:
+            sum+=c.update_mll()
+
+        return sum
 
     def __repr__(self, level=0, **kwargs):
         _wei = dict.get(kwargs, 'extra')
@@ -138,6 +170,7 @@ class Productt:
         return None
 
     def forward(self, x_pred, **kwargs):
+        y_d = dict.get(kwargs, 'y_d', 0)
         mu_x = np.zeros((len(x_pred),1, y_d))
         co_x = np.zeros((len(x_pred), y_d,y_d ))
 
@@ -161,9 +194,17 @@ class Productt:
 
     def update(self):
         return np.sum([c.update() for c in self.children])
-    
+
     def update_mll(self):
-        return np.sum([c.update_mll() for c in self.children])
+        sum = 0
+        for c in self.children:
+            sum+=c.update_mll()
+        # a = torch.sum(torch.tensor([c.update_mll() for c in self.children],requires_grad=True))
+
+        return sum
+
+
+
 
     def __repr__(self, level=0, **kwargs):
         _sel = " " * (level - 1) + f"ⓛ Product scope={self.scope} "
@@ -216,7 +257,44 @@ class ExactGPModel(gpytorch.models.ExactGP):
             raise Exception("Unknown GP type")
 
         self.covar_module = ScaleKernel(k)
+        # lengthscale_prior = gpytorch.priors.GammaPrior(2, 3)
+        # outputscale_prior = gpytorch.priors.GammaPrior(2, 3)
+        # self.covar_module.base_kernel.lengthscale = lengthscale_prior.sample()
+        # self.covar_module.outputscale = outputscale_prior.sample()
 
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+class FancyGPWithPriors(gpytorch.models.ExactGP):
+    def __init__(self, **kwargs):
+        super(FancyGPWithPriors, self)
+        x = dict.get(kwargs, 'x')
+        y = dict.get(kwargs, 'y')
+        likelihood = dict.get(kwargs, 'likelihood')
+        xd = x.shape[1]
+        super(FancyGPWithPriors, self).__init__(x, y, likelihood)
+        value = randint(0, 10)
+        # torch.manual_seed(value)
+        self.mean_module = gpytorch.means.ConstantMean()
+        lengthscale_prior = gpytorch.priors.GammaPrior(2,3)
+        outputscale_prior = gpytorch.priors.GammaPrior(2,3)
+
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.RBFKernel(
+                # lengthscale_prior=lengthscale_prior,
+                ard_num_dims=xd
+            ),
+            # outputscale_prior=outputscale_prior
+        )
+
+        # Initialize lengthscale and outputscale to mean of priors
+        self.covar_module.base_kernel.lengthscale = lengthscale_prior.sample()
+        self.covar_module.outputscale = outputscale_prior.sample()
+        # likelihood.noise = 0.5
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -240,22 +318,21 @@ class GP:
 
 
 
-
     def forward(self, x_pred, **kwargs):
 
         mu_gp, co_gp = self.predict1(x_pred,**kwargs)
         return mu_gp, co_gp
 
     def update(self):
-        return self.mll  # np.log(self.n)*0.01 #-self.mll - 1/np.log(self.n)
-    
+        return self.mll # np.log(self.n)*0.01 #-self.mll - 1/np.log(self.n)
+
     def update_mll(self):
         return self.mll_grad
 
+
     def predict1(self, X_s, **kwargs):
-        # if X_s.shape[0] != 0:
+
         device_ = torch.device("cuda")
-        # device_ = torch.device("cuda")  # .to('cpu') #.cuda()
         self.model = self.model.to(device_)
         self.model.eval()
         self.likelihood.eval()
@@ -268,7 +345,7 @@ class GP:
         x = torch.from_numpy(X_s).float().to(device_)
         # noises = torch.ones(len(X_s)) * 0.01
         # noises = noises.to(self.device)
-
+        # mll = ExactMarginalLogLikelihood(self.likelihood, self.model(x))
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
 
                 # observed_pred = self.likelihood(self.model(x),noise=noises)
@@ -277,7 +354,8 @@ class GP:
                 pm, pv = observed_pred.mean, observed_pred.variance
                 pm_ = pm.detach().cpu()
                 pv_ = pv.detach().cpu()
-                del observed_pred,pm,pv,self.model
+                del observed_pred,pm,pv
+                # del self.model
                 torch.cuda.empty_cache()
                 gc.collect()
         x.detach()
@@ -291,9 +369,10 @@ class GP:
         # return pm.detach().cpu(), pv.detach().cpu()
         return pm_, pv_
 
-    def init(self, **kwargs):
-        lr = dict.get(kwargs, 'lr', 0.20)
-        steps = dict.get(kwargs, 'steps', 100)
+    def init3(self, **kwargs):
+        loss_all=[]
+        lr = dict.get(kwargs, 'lr', 0.01)
+        steps = dict.get(kwargs, 'steps', 600)
 
         self.n = len(self.x)
         self.cuda = dict.get(kwargs, 'cuda') and torch.cuda.is_available()
@@ -304,15 +383,76 @@ class GP:
         self.x = torch.from_numpy(self.x).float().to(self.device)
         self.y = torch.from_numpy(self.y.ravel()).float().to(self.device)
 
-        noises = torch.ones(self.n) * 0.001
-
-#         self.likelihood = FixedNoiseGaussianLikelihood(noise=noises, learn_additional_noise=True)
         self.likelihood = GaussianLikelihood()
         self.likelihood.train()
         # noise_constraint=gpytorch.constraints.LessThan(1e-2))
         # (noise_prior=gpytorch.priors.NormalPrior(3, 20))
-        self.model = ExactGPModel(x=self.x, y=self.y, likelihood=self.likelihood, type=self.type).to(
+        self.model = FancyGPWithPriors(x=self.x, y=self.y, likelihood=self.likelihood, type=self.type).to(
+            self.device)  # .cuda()
+        # print(' initial lengthscale: %.3f   noise: %.3f   scope: %.1f' % (
+        #     self.model.covar_module.base_kernel.lengthscale.item(),
+        #     self.model.likelihood.noise.item(),
+        #     self.scope))
+        # for param_name, param in self.model.named_parameters():
+        #     print(f'initial Parameter name: {param_name:42} value = {param.item()}')
+        self.optimizer = Adam([{'params': self.model.parameters()}], lr=lr)
+        self.model.train()
+
+        mll = ExactMarginalLogLikelihood(self.likelihood, self.model)
+        # print(f"\tGP {self.type} init completed. Training on {self.device}")
+        for i in range(steps):
+            self.optimizer.zero_grad()  # Zero gradients from previous iteration
+            output = self.model(self.x)  # Output from model
+            loss = -mll(output, self.y)  # Calc loss and backprop gradients
+            loss_all.append(loss.item())
+            if i > 0 and i % 10 == 0:
+                print(f"\t Step {i + 1}/{steps}, -mll(loss): {round(loss.item(), 3)}")
+
+            loss.backward()
+            self.optimizer.step()
+        np.savetxt('loss_train.csv', [loss_all], delimiter=',')
+        # LOG LIKELIHOOD NOW POSITIVE
+        self.mll = -loss.detach().item()
+
+        # print(f"\tCompleted. +mll: {round(self.mll, 3)}")
+
+        self.x.detach()
+        self.y.detach()
+
+        del self.x
+        del self.y
+        self.x = self.y = None
+
+        self.model = self.model.to('cpu')
+        torch.cuda.empty_cache()
+        gc.collect()
+    def init(self, **kwargs):
+        lr = dict.get(kwargs, 'lr', 0.1)
+        steps = dict.get(kwargs, 'steps', 200)
+
+        self.n = len(self.x)
+        self.cuda = dict.get(kwargs, 'cuda') and torch.cuda.is_available()
+        self.device = torch.device("cuda" if self.cuda else "cpu")
+        if self.cuda:
+            torch.cuda.empty_cache()
+
+        self.x = torch.from_numpy(self.x).float().to(self.device)
+        self.y = torch.from_numpy(self.y.ravel()).float().to(self.device)
+
+        # noises = torch.ones(self.n) * 0.001
+
+        # self.likelihood = FixedNoiseGaussianLikelihood(noise=noises, learn_additional_noise=True)
+        noise_prior = gpytorch.priors.NormalPrior(0,1)
+        self.likelihood = GaussianLikelihood()
+        self.likelihood.train()
+        # noise_constraint=gpytorch.constraints.LessThan(1e-2))
+        # (noise_prior=gpytorch.priors.NormalPrior(3, 20))
+        self.model = ExactGPModel(x=self.x, y=self.y, likelihood=self.likelihood, type='matern1.5_ard').to(
         self.device)  # .cuda()
+        # print(' lengthscale: %.3f   noise: %.3f   scope: %.1f' % (
+        #     self.model.covar_module.base_kernel.lengthscale.item(),
+        #     self.model.likelihood.noise.item(),
+        #     self.scope))
         # self.model = ExactGPModel(likelihood=self.likelihood, type=self.type).to(
         #     self.device)  # .cuda()
         self.optimizer = Adam([{'params': self.model.parameters()}], lr=lr)
@@ -325,24 +465,27 @@ class GP:
         #                          )
         mll = ExactMarginalLogLikelihood(self.likelihood, self.model)
         print(f"\tGP {self.type} init completed. Training on {self.device}")
+        loss_all_init=[]
         for i in range(steps):
             # for batch_idx,(batch_x,batch_y) in enumerate(loader):
             self.optimizer.zero_grad()  # Zero gradients from previous iteration
             output = self.model(self.x)  # Output from model
             loss = -mll(output, self.y)  # Calc loss and backprop gradients
-            # output = self.model(batch_x)  # Output from model
-            # loss = -mll(output, batch_y)  # Calc loss and backprop gradients
+            loss_all_init.append(loss.item())
             if i > 0 and i % 10 == 0:
                 print(f"\t Step {i + 1}/{steps}, -mll(loss): {round(loss.item(), 3)}")
+
 
             loss.backward()
             self.optimizer.step()
 
         # LOG LIKELIHOOD NOW POSITIVE
         self.mll = -loss.detach().item()
+        np.savetxt('loss_train_no_ini.csv', [loss_all_init], delimiter=',')
 
 
-        print(f"\tCompleted. +mll: {round(self.mll, 3)}")
+
+        # print(f"\tCompleted. +mll: {round(self.mll, 3)}")
 
         self.x.detach()
         self.y.detach()
@@ -403,10 +546,10 @@ def structure(root_region, scope,**kwargs):
                     sto.children.append(_child)
                     _cn = len(sto.children)
                     sto.weights = np.ones(_cn) / _cn
-                # elif type(child) is Product:
-                #     scope = child.scope
-                #     _child = Productt(scope = scope)
-                #     sto.children.append(_child)
+                elif type(child) is Product:
+                    scope = child.scope
+                    _child = Productt(scope = scope)
+                    sto.children.append(_child)
                 # elif type(child) is Mixture:
                 #     scope = child.scope
                 #     _child = Sum(scope=scope)
@@ -457,7 +600,7 @@ def structure(root_region, scope,**kwargs):
                     _child = Sum(scope = scope)
                     sto.children.append(_child)
                 elif type(child) is GPMixture:
-                    gp_type = 'rbf'
+                    gp_type = 'rbf_ard'
                     scopee = gro.scope
                     # key = (*gro.mins, *gro.maxs, gp_type,gro.collect,count,scopee[i])
                     # gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs,collect = gro.collect,count = count, scope=scopee[i])
@@ -472,4 +615,3 @@ def structure(root_region, scope,**kwargs):
 
             to_process.extend(zip(gro.children, sto.children))
     return root, list(gps.values())
-
