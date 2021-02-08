@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from gpytorch.priors import GammaPrior
-from prod_learnspngp import query, build_bins
-from prod_gp import structure, ExactGPModel
+from prod_structure import query, build_bins
+from prod_inference import structure, ExactGPModel
 from gpytorch.kernels import *
 from gpytorch.likelihoods import *
 from torch import optim
