@@ -1,5 +1,5 @@
 import numpy as np
-from prod_learnspngp import Mixture, Separator, GPMixture, Color
+from prod_structure import Mixture, Separator, GPMixture, Color
 import gc
 import torch
 import gpytorch
@@ -8,7 +8,7 @@ from gpytorch.likelihoods import *
 from gpytorch.mlls import *
 from random import randint
 from torch.optim import *
-from prod_learnspngp import Product
+from prod_structure import Product
 from torch.utils.data import TensorDataset, DataLoader
 from scipy.special import logsumexp
  ## y_d indicates the scope of y
