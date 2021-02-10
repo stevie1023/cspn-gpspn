@@ -250,16 +250,16 @@ def build_bins(**kwargs):
 
                     # y2 = node2.y
                     mins_node, maxs_node = np.min(x_node, 0), np.max(x_node, 0)
-                    r = beta.rvs(2, 2, size=x_node.shape[1])
-                    v = [(maxs_node[d] - mins_node[d]),
-                         (maxs_node[d2] - mins_node[d2]),
-                         (maxs_node[d3] - mins_node[d3])]
+                    # r = beta.rvs(2, 2, size=x_node.shape[1])
+                    # v = [(maxs_node[d] - mins_node[d]),
+                    #      (maxs_node[d2] - mins_node[d2]),
+                    #      (maxs_node[d3] - mins_node[d3])]
 
                     scope = node2.scope
                     d_selected = np.argsort(-np.var(x_node, axis=0))
                     d2 = d_selected[1]
-                    d3 = d_selected[2]
-                    d4 = d_selected[3]
+                    # d3 = d_selected[2]
+                    # d4 = d_selected[3]
                     #
                     # fit_lhs = node2.mins < splits[:, 0]
                     # fit_rhs = node2.maxs > splits[:, -1]
@@ -276,7 +276,7 @@ def build_bins(**kwargs):
                     #     node_splits3.append(node_split)
                     node_splits_all = [1, 2]
                     quantiles = np.quantile(x_node, np.linspace(0, 1, num = ddd+2), axis=0).T
-                    d = [d, d2,d3,d4]
+                    d = [d, d2]
                     m = 0
                     for split in node_splits_all:
                         u = np.unique(quantiles[d[m]])
@@ -568,19 +568,19 @@ def build_bins(**kwargs):
             scope = node.scope
             d_selected = np.argsort(-np.var(x_node, axis=0))
             d2 = d_selected[1]
-            d3 = d_selected[2]
-            d4 = d_selected[3]
-            r = beta.rvs(2, 2, size=x_node.shape[1])
-            v = [(maxs_node[d] - mins_node[d]),
-                 (maxs_node[d2] - mins_node[d2]),
-                 (maxs_node[d3] - mins_node[d3])]
+            # d3 = d_selected[2]
+            # d4 = d_selected[3]
+            # r = beta.rvs(2, 2, size=x_node.shape[1])
+            # v = [(maxs_node[d] - mins_node[d]),
+            #      (maxs_node[d2] - mins_node[d2]),
+            #      (maxs_node[d3] - mins_node[d3])]
 
             quantiles = np.quantile(x_node, np.linspace(0, 1, num = ddd+2),axis=0).T
 
 
             node_splits_all = [1,2]
             if len(node_splits_all) == 0: raise Exception('1')
-            d = [d, d2, d3,d4]
+            d = [d, d2]
 
             m = 0
 
