@@ -1,5 +1,5 @@
 import numpy as np
-from prod_structure import Mixture, Separator, GPMixture, Color
+from prod_learnspngp import Mixture, Separator, GPMixture, Color
 import gc
 import torch
 import gpytorch
@@ -8,7 +8,7 @@ from gpytorch.likelihoods import *
 from gpytorch.mlls import *
 from random import randint
 from torch.optim import *
-from prod_structure import Product
+from prod_learnspngp import Product
 from torch.utils.data import TensorDataset, DataLoader
 from scipy.special import logsumexp
  ## y_d indicates the scope of y
@@ -199,6 +199,9 @@ class Productt:
         sum = 0
         for c in self.children:
             sum+=c.update_mll()
+            # sum.append(c.update_mll())
+        # sum = torch.stack(sum,0)
+            # sum = torch.cat((sum, c.update_mll()), 0)
         # a = torch.sum(torch.tensor([c.update_mll() for c in self.children],requires_grad=True))
 
         return sum
@@ -257,10 +260,10 @@ class ExactGPModel(gpytorch.models.ExactGP):
             raise Exception("Unknown GP type")
 
         self.covar_module = ScaleKernel(k)
-        # lengthscale_prior = gpytorch.priors.GammaPrior(2, 3)
-        # outputscale_prior = gpytorch.priors.GammaPrior(2, 3)
-        # self.covar_module.base_kernel.lengthscale = lengthscale_prior.sample()
-        # self.covar_module.outputscale = outputscale_prior.sample()
+        lengthscale_prior = gpytorch.priors.GammaPrior(2, 3)
+        outputscale_prior = gpytorch.priors.GammaPrior(2, 3)
+        self.covar_module.base_kernel.lengthscale = lengthscale_prior.sample()
+        self.covar_module.outputscale = outputscale_prior.sample()
 
 
     def forward(self, x):
@@ -277,7 +280,7 @@ class FancyGPWithPriors(gpytorch.models.ExactGP):
         likelihood = dict.get(kwargs, 'likelihood')
         xd = x.shape[1]
         super(FancyGPWithPriors, self).__init__(x, y, likelihood)
-        value = randint(0, 10)
+        # value = randint(0, 10)
         # torch.manual_seed(value)
         self.mean_module = gpytorch.means.ConstantMean()
         lengthscale_prior = gpytorch.priors.GammaPrior(2,3)
@@ -355,11 +358,12 @@ class GP:
                 pm_ = pm.detach().cpu()
                 pv_ = pv.detach().cpu()
                 del observed_pred,pm,pv
-                # del self.model
+                del self.model
                 torch.cuda.empty_cache()
                 gc.collect()
         x.detach()
         del x
+
         torch.cuda.empty_cache()
 
 
@@ -371,8 +375,8 @@ class GP:
 
     def init3(self, **kwargs):
         loss_all=[]
-        lr = dict.get(kwargs, 'lr', 0.01)
-        steps = dict.get(kwargs, 'steps', 600)
+        lr = dict.get(kwargs, 'lr', 0.3)
+        steps = dict.get(kwargs, 'steps', 800)
 
         self.n = len(self.x)
         self.cuda = dict.get(kwargs, 'cuda') and torch.cuda.is_available()
@@ -387,7 +391,7 @@ class GP:
         self.likelihood.train()
         # noise_constraint=gpytorch.constraints.LessThan(1e-2))
         # (noise_prior=gpytorch.priors.NormalPrior(3, 20))
-        self.model = FancyGPWithPriors(x=self.x, y=self.y, likelihood=self.likelihood, type=self.type).to(
+        self.model = ExactGPModel(x=self.x, y=self.y, likelihood=self.likelihood, type=self.type).to(
             self.device)  # .cuda()
         # print(' initial lengthscale: %.3f   noise: %.3f   scope: %.1f' % (
         #     self.model.covar_module.base_kernel.lengthscale.item(),
@@ -410,7 +414,7 @@ class GP:
 
             loss.backward()
             self.optimizer.step()
-        np.savetxt('loss_train.csv', [loss_all], delimiter=',')
+        # np.savetxt('loss_train.csv', [loss_all], delimiter=',')
         # LOG LIKELIHOOD NOW POSITIVE
         self.mll = -loss.detach().item()
 
@@ -423,12 +427,13 @@ class GP:
         del self.y
         self.x = self.y = None
 
+
         self.model = self.model.to('cpu')
         torch.cuda.empty_cache()
         gc.collect()
     def init(self, **kwargs):
-        lr = dict.get(kwargs, 'lr', 0.1)
-        steps = dict.get(kwargs, 'steps', 200)
+        lr = dict.get(kwargs, 'lr', 0.2)
+        steps = dict.get(kwargs, 'steps', 100)
 
         self.n = len(self.x)
         self.cuda = dict.get(kwargs, 'cuda') and torch.cuda.is_available()
@@ -442,7 +447,7 @@ class GP:
         # noises = torch.ones(self.n) * 0.001
 
         # self.likelihood = FixedNoiseGaussianLikelihood(noise=noises, learn_additional_noise=True)
-        noise_prior = gpytorch.priors.NormalPrior(0,1)
+        # noise_prior = gpytorch.priors.NormalPrior(0,1)
         self.likelihood = GaussianLikelihood()
         self.likelihood.train()
         # noise_constraint=gpytorch.constraints.LessThan(1e-2))
@@ -481,7 +486,7 @@ class GP:
 
         # LOG LIKELIHOOD NOW POSITIVE
         self.mll = -loss.detach().item()
-        np.savetxt('loss_train_no_ini.csv', [loss_all_init], delimiter=',')
+        # np.savetxt('loss_train_no_ini.csv', [loss_all_init], delimiter=',')
 
 
 
@@ -494,7 +499,8 @@ class GP:
         del self.y
         self.x = self.y = None
 
-        self.model = self.model.to('cpu')
+
+        # self.model = self.model.to('cpu')
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -600,7 +606,7 @@ def structure(root_region, scope,**kwargs):
                     _child = Sum(scope = scope)
                     sto.children.append(_child)
                 elif type(child) is GPMixture:
-                    gp_type = 'rbf_ard'
+                    gp_type = 'matern1.5_ard'
                     scopee = gro.scope
                     # key = (*gro.mins, *gro.maxs, gp_type,gro.collect,count,scopee[i])
                     # gps[key] = GP(type=gp_type, mins=gro.mins, maxs=gro.maxs,collect = gro.collect,count = count, scope=scopee[i])
