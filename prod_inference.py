@@ -49,12 +49,17 @@ class Sum:
 
     def update(self):
         c_mllh = np.array([c.update() for c in self.children])
-        new_weights = np.exp(c_mllh)
-        self.weights = new_weights / np.sum(new_weights)
-        _wei = np.array(self.weights).reshape((-1, 1))
+        # new_weights = np.exp(c_mllh)
+        # self.weights = new_weights / np.sum(new_weights)
+        # _wei = np.array(self.weights).reshape((-1, 1))
         # self.mll = c_mllh @_wei
+        lw = logsumexp(c_mllh)
+        logweights = c_mllh - lw
 
-        return np.log(np.sum(new_weights))
+
+        self.weights = np.exp(logweights)
+
+        return lw
 
     def update_mll(self):
         if len(self.children)==2:
