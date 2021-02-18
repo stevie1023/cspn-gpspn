@@ -1,0 +1,84 @@
+class MultitaskGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood):
+        xd = x.shape[1]
+        active_dims = torch.tensor(list(range(xd)))
+
+        super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
+        self.mean_module = gpytorch.means.MultitaskMean(
+            gpytorch.means.ConstantMean(), num_tasks=y_d
+        )
+        self.covar_module = gpytorch.kernels.MultitaskKernel(
+            gpytorch.kernels.MaternKernel(nu=1.5, ard_num_dims=xd, active_dims=active_dims), num_tasks=y_d, rank=y_d-1
+        )
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
+
+# train_x = torch.from_numpy(x).float().to("cuda")
+# train_y = torch.from_numpy(y.ravel()).float().to("cuda")
+# likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=y_d)
+# model = MultitaskGPModel(train_x, train_y, likelihood).to("cuda")
+# model.train()
+# likelihood.train()
+# #
+# # Use the adam optimizer
+# optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # Includes GaussianLikelihood parameters
+#
+# # "Loss" for GPs - the marginal log likelihood
+# mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+# training_iterations = epoch
+# for i in range(training_iterations):
+#     optimizer.zero_grad()
+#     output = model(train_x)
+#     loss = -mll(output, train_y)
+#     loss.backward()
+#     print('Iter %d/%d - Loss: %.3f' % (i + 1, training_iterations, loss.item()))
+#     optimizer.step()
+#
+# model.eval()
+# likelihood.eval()
+# #
+#
+#
+# # # Make predictions
+# x_test = torch.from_numpy(x1).float().to("cuda")
+# y_test = torch.from_numpy(y1.ravel()).float().to("cuda")
+# with torch.no_grad(), gpytorch.settings.fast_pred_var():
+#     observed_pred = likelihood(model(x_test))
+#     mu, cov = observed_pred.mean.detach().cpu().numpy(), observed_pred.variance.detach().cpu().numpy()
+#     # lower, upper = predictions.confidence_region()
+
+
+
+rmse = 0
+mae = 0
+for k in range(y.shape[1]):
+    mu_s1 = mu[:, k]
+    sqe1 = (mu_s1 - y1[:,k]) ** 2
+    rmse1 = np.sqrt(sqe1.sum() / len(y1))
+    mae1 = np.sqrt(sqe1).sum() / len(y1)
+    mae+=mae1
+    rmse+=rmse1
+    # np.savetxt('rmse_windmill.csv', [all_rmse_improved], delimiter=',')
+
+nlpd1=0
+count=0
+for i in range(mu.shape[0]):
+    sigma = np.sqrt(np.abs(np.linalg.det(np.diag(cov[i,:]))))
+
+    d1 = (y1[i, :] - mu[i, :]).reshape((1, y_d))
+    a = 1/(np.power((2*np.pi),y.shape[1]/2)*sigma)
+    ni = np.linalg.pinv(np.diag(cov[i, :]))
+    b = a * np.exp(np.dot(np.dot(-1 / 2 * d1, ni), d1.T))
+ 
+    nlpd = -np.log(b)
+
+    nlpd1+=nlpd
+nlpd2 = nlpd1/len(y1)
+print(rmse/y_d)
+print(mae/y_d)
+print(nlpd2)
+print(count)
+#
