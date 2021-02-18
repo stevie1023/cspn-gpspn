@@ -1,21 +1,17 @@
 # prepare data
+import gc
+
+import dill
 import smp as smp
 from PIL import Image
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from gpytorch.priors import GammaPrior
-from prod_learnspngp import query, build_bins
-from prod_gp import structure, ExactGPModel
-from gpytorch.kernels import *
-from gpytorch.likelihoods import *
-import random
-from torch import optim
-from torch.optim import *
-from gpytorch.mlls import *
-import torch
-import scipy.misc as smp
-img_array = np.array(Image.open('rainbow.jpg'))
+from prod_structure import query, build_bins
+from prod_inference import structure, ExactGPModel
+
+img_array = np.array(Image.open('baboon1.png'))
 # load original image, shape (n, n, 3)
 H,W,_ = img_array.shape
 scale = 2
@@ -27,20 +23,20 @@ for i in range(int(H/scale)):
         x_train.append([i,j])
         y_train.append(img_train[i,j])
 
+y_test =img_array.reshape((H,W,3))/255
+y_test = y_test.reshape((H*W,1,3))
 
-std1, mu1= np.std(x_train,axis=0), np.mean(y_train,axis=0)
-std2, mu2= np.std(y_train,axis=0), np.mean(x_train,axis=0)
-x = np.asarray(x_train-mu2)/ std1  # normalized train_x
-# x1 = x1_/std1 # test_x
-y = np.asarray(y_train-mu1)/std2# train_y
-# y1 = y1_-mu1 #test_y
+x = np.asarray(x_train)/H
+# y = np.asarray(y_train-mu1)/std2# train_y
+y = np.asarray(y_train)/255
 y_d = y.shape[1]
 x_test=[]
 for i in range(H):
     for j in range(W):
         x_test.append([i*0.5,j*0.5])
-x_test = np.asarray(x_test-mu2)/std1
-# # train SPGPN
+
+x_test = np.asarray(x_test)/H
+# train SPGPN
 opts = {
         'min_samples': 0,
         'X': x,
@@ -53,13 +49,12 @@ opts = {
         'reduce_branching': True
     }
 root_region, gps_ = build_bins(**opts)
-
+1
 root, gps = structure(root_region,scope = [i for i in range(y.shape[1])], gp_types=['matern1.5_ard'])
-
-
 lr = 0.1
-steps = 10
+steps = 150
 
+# # #
 for i, gp in enumerate(gps):
     idx = query(x, gp.mins, gp.maxs)
     gp.x = x[idx]
@@ -67,25 +62,46 @@ for i, gp in enumerate(gps):
     gp.y = y_scope[idx]
     print(f"Training GP {i + 1}/{len(gps)} ({len(idx)})")
     gp.init(cuda=True,lr = lr,steps=steps)
+
+# filename = 'graph1.dill'
+# dill.dump(root, open(filename, 'wb'))
 root.update()
 # # interpolation
+filename2 = 'graph2.dill'
+dill.dump(root, open(filename2, 'wb'))
 
+# with open("/home/mzhu/madesi/mzhu_code/graph1.dill", "rb") as dill_file:
+#     root = dill.load(dill_file)
 mu,_ = root.forward(np.asarray(x_test), smudge=0,y_d = y_d)
-y_interpolated = np.zeros((H,W,3), dtype=np.uint8)
+# print(mu.shape)
+
+rmse = 0
+mae = 0
+for k in range(y.shape[1]):
+    mu_s1 = mu[:,0, k]
+    sqe1 = (mu_s1 - y_test[:,0,k]) ** 2
+    rmse1 = np.sqrt(sqe1.sum() / len(y_test))
+    mae1 = np.sqrt(sqe1).sum() / len(y_test)
+    mae+=mae1
+    rmse+=rmse1
+print('rmse',rmse)
+print('mae',mae)
+
 for k in range(mu.shape[0]):
-    mu[k, 0, 0] = mu[k, 0, 0]*std2[0]+mu1[0]
-    mu[k, 0, 1] = mu[k, 0, 1]*std2[1]+mu1[1]
-    mu[k, 0, 2] = mu[k, 0, 2]*std2[2]+mu1[2]
-    # mu_ = np.array((mu_s1,mu_s2,mu_s3))
-    # y_interpolated[] = mu_.astype(np.uint8)
-for i in range(H):
-    for j in range(W):
-        y_interpolated[i,j] =mu[i*int(W/10)+j]
+
+    mu[k, 0, 0] = mu[k, 0, 0]*255
+    mu[k, 0, 1] = mu[k, 0, 1]*255
+    mu[k, 0, 2] = mu[k, 0, 2]*255
+
+mu = mu.astype(np.uint8).reshape((H,W,3))
+im = Image.fromarray(mu)
+im.save("rainbowwei1.png")
 
 
-# y1 = np.array(y_interpolated).reshape((int(H/10),int(W/10),3))
-# pil_img = Image.fromarray(y_interpolated.astype(np.uint8)).convert('RGB')
-pil_img = smp.toimage( y_interpolated )
-pil_img.save('pisaa.png')
+im = Image.fromarray(img_train)
+im.save("pisaa1.png")
 
-# MSE = mean_squared_error(y_test, img) # compare the interpolated image with the original one
+mu[::scale,::scale,:] = img_train
+im = Image.fromarray(mu)
+im.save("rainbowwe12.png")
+
